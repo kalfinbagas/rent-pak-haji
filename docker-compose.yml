@@ -1,0 +1,178 @@
+# ═══════════════════════════════════════════════════════════════
+#  RENT PAK HAJI — Docker Infrastructure
+#  Author : Rizkalfin Bagas Aminullah
+#  Version: 2.0.0  |  May 2026
+#
+#  v2.0 Changes (SERA AstraFMS adaptation):
+#    + Mount schema files untuk rpk_vehicle & rpk_master
+#    + Tambah rpk_corporate database (CustomerContract B2B)
+#    + PostgreSQL init-scripts folder untuk sequential execution
+# ═══════════════════════════════════════════════════════════════
+
+services:
+
+  # ─────────────────────────────────────────────────────────────
+  # DATABASE
+  # ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: rpk-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rpk_admin
+      POSTGRES_PASSWORD: RpkSecure2026!
+      POSTGRES_DB: rpk_master
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # init-db.sql dijalankan PERTAMA — buat semua database
+      - ./infrastructure/scripts/init-db.sql:/docker-entrypoint-initdb.d/01_init.sql
+      # Schema files dijalankan SETELAH init — buat semua tabel per DB
+      # SERA adaptation: rpk_vehicle & rpk_master diperluas dengan tabel baru
+      - ./infrastructure/scripts/schema/rpk_master_schema.sql:/docker-entrypoint-initdb.d/02_master_schema.sql
+      - ./infrastructure/scripts/schema/rpk_vehicle_schema.sql:/docker-entrypoint-initdb.d/03_vehicle_schema.sql
+      - ./infrastructure/scripts/schema/rpk_bookingorder_schema.sql:/docker-entrypoint-initdb.d/04_bookingorder_schema.sql
+      - ./infrastructure/scripts/schema/rpk_journey_schema.sql:/docker-entrypoint-initdb.d/05_journey_schema.sql
+      - ./infrastructure/scripts/schema/rpk_driver_schema.sql:/docker-entrypoint-initdb.d/06_driver_schema.sql
+      - ./infrastructure/scripts/schema/rpk_payment_schema.sql:/docker-entrypoint-initdb.d/07_payment_schema.sql
+      - ./infrastructure/scripts/schema/rpk_notification_schema.sql:/docker-entrypoint-initdb.d/08_notification_schema.sql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U rpk_admin']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rpk-network
+
+  # ─────────────────────────────────────────────────────────────
+  # MESSAGE BROKER
+  # ─────────────────────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rpk-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: rpk_admin
+      RABBITMQ_DEFAULT_PASS: RpkSecure2026!
+    ports:
+      - '5672:5672'    # AMQP
+      - '15672:15672'  # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', 'check_running']
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    networks:
+      - rpk-network
+
+  # ─────────────────────────────────────────────────────────────
+  # CACHE
+  # ─────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: rpk-redis
+    restart: unless-stopped
+    command: redis-server --requirepass RpkRedis2026!
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', '-a', 'RpkRedis2026!', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rpk-network
+
+  # ─────────────────────────────────────────────────────────────
+  # LOG AGGREGATION
+  # ─────────────────────────────────────────────────────────────
+  seq:
+    image: datalust/seq:latest
+    container_name: rpk-seq
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: 'Y'
+    ports:
+      - '5341:5341'  # Ingestion
+      - '8081:80'    # UI
+    volumes:
+      - seq_data:/data
+    networks:
+      - rpk-network
+
+  # ─────────────────────────────────────────────────────────────
+  # DISTRIBUTED TRACING
+  # ─────────────────────────────────────────────────────────────
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: rpk-jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: 'true'
+    ports:
+      - '16686:16686'  # UI
+      - '4317:4317'    # OTLP gRPC
+      - '4318:4318'    # OTLP HTTP
+    networks:
+      - rpk-network
+
+  # ─────────────────────────────────────────────────────────────
+  # DATABASE UI
+  # ─────────────────────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: rpk-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: kalfinbagas@gmail.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - '8080:80'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - rpk-network
+
+  # ─────────────────────────────────────────────────────────────
+  # MQTT BROKER (untuk IoT / NFC Gateway)
+  # ─────────────────────────────────────────────────────────────
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: rpk-mosquitto
+    restart: unless-stopped
+    ports:
+      - '1883:1883'   # MQTT
+      - '9001:9001'   # WebSocket
+    volumes:
+      - ./infrastructure/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    networks:
+      - rpk-network
+
+# ═══════════════════════════════════════════════════════════════
+# VOLUMES
+# ═══════════════════════════════════════════════════════════════
+volumes:
+  postgres_data:
+  rabbitmq_data:
+  redis_data:
+  seq_data:
+  pgadmin_data:
+  mosquitto_data:
+  mosquitto_log:
+
+# ═══════════════════════════════════════════════════════════════
+# NETWORKS
+# ═══════════════════════════════════════════════════════════════
+networks:
+  rpk-network:
+    driver: bridge

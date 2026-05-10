@@ -1,0 +1,23 @@
+# .NET
+**/bin/
+**/obj/
+**/*.user
+**/.vs/
+**/appsettings.Development.json
+
+# NestJS / Node
+**/node_modules/
+**/.env
+**/.env.local
+**/dist/
+
+# Docker
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
