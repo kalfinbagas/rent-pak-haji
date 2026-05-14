@@ -5,9 +5,9 @@ using FluentValidation;
 using MediatR;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi.Models;
 using RabbitMQ.Client;
 using RentPakHaji.Common.Application.Behaviours;
+using Scalar.AspNetCore;
 using Serilog;
 using Serilog.Events;
 using System.Text;
@@ -45,13 +45,13 @@ try
     builder.Services.AddInfrastructure(builder.Configuration);
 
     // ── RabbitMQ connection factory (API-owned, for publisher) ─
+    // DispatchConsumersAsync was removed in RabbitMQ.Client 7.x — async is now the default.
     builder.Services.AddSingleton<IConnectionFactory>(_ => new ConnectionFactory
     {
-        HostName               = builder.Configuration["RabbitMq:Host"]     ?? "localhost",
-        Port                   = int.Parse(builder.Configuration["RabbitMq:Port"] ?? "5672"),
-        UserName               = builder.Configuration["RabbitMq:Username"] ?? "guest",
-        Password               = builder.Configuration["RabbitMq:Password"] ?? "guest",
-        DispatchConsumersAsync = true
+        HostName = builder.Configuration["RabbitMq:Host"]     ?? "localhost",
+        Port     = int.Parse(builder.Configuration["RabbitMq:Port"] ?? "5672"),
+        UserName = builder.Configuration["RabbitMq:Username"] ?? "guest",
+        Password = builder.Configuration["RabbitMq:Password"] ?? "guest",
     });
 
     builder.Services.AddSingleton<IConnection>(sp =>
@@ -86,36 +86,35 @@ try
 
     builder.Services.AddAuthorization();
 
-    // ── API ────────────────────────────────────────────────────
+    // ── API + OpenAPI (native .NET 10 / Scalar UI) ────────────
     builder.Services.AddControllers();
     builder.Services.AddEndpointsApiExplorer();
-    builder.Services.AddSwaggerGen(c =>
+    builder.Services.AddOpenApi(options =>
     {
-        c.SwaggerDoc("v1", new() { Title = "BookingOrder Service API", Version = "v1" });
-
-        c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+        options.AddDocumentTransformer((doc, _, _) =>
         {
-            Name         = "Authorization",
-            Type         = SecuritySchemeType.Http,
-            Scheme       = "bearer",
-            BearerFormat = "JWT",
-            In           = ParameterLocation.Header,
-            Description  = "Enter: Bearer {your-jwt-token}"
-        });
-        c.AddSecurityRequirement(new OpenApiSecurityRequirement
-        {
-            {
-                new OpenApiSecurityScheme
-                {
-                    Reference = new OpenApiReference
-                    {
-                        Type = ReferenceType.SecurityScheme,
-                        Id   = "Bearer"
-                    }
-                },
-                Array.Empty<string>()
-            }
+            doc.Info = new() { Title = "BookingOrder Service API", Version = "v1" };
+            return Task.CompletedTask;
         });
     });
 
-    // ─�
+    // ── Health Check ───────────────────────────────────────────
+    builder.Services.AddHealthChecks();
+
+    var app = builder.Build();
+
+    // ── Middleware Pipeline ────────────────────────────────────
+    // 1. Global exception handler — must be outermost
+    app.UseGlobalExceptionHandler();
+
+    // 2. OpenAPI + Scalar UI (dev only)
+    if (app.Environment.IsDevelopment())
+    {
+        app.MapOpenApi();
+        app.MapScalarApiReference(opts =>
+            opts.WithTitle("BookingOrder API")
+                .WithPreferredScheme("Bearer"));
+    }
+
+    // 3. Request logging
+    app.UseSerilogRequestLogging

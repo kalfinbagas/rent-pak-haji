@@ -13,13 +13,13 @@ public static class DependencyInjection
         IConfiguration configuration)
     {
         // ── RabbitMQ connection factory ────────────────────────────
+        // DispatchConsumersAsync was removed in RabbitMQ.Client 7.x — async dispatch is now the default.
         services.AddSingleton<IConnectionFactory>(_ => new ConnectionFactory
         {
-            HostName               = configuration["RabbitMq:Host"]     ?? "localhost",
-            Port                   = int.Parse(configuration["RabbitMq:Port"] ?? "5672"),
-            UserName               = configuration["RabbitMq:Username"] ?? "guest",
-            Password               = configuration["RabbitMq:Password"] ?? "guest",
-            DispatchConsumersAsync = true
+            HostName = configuration["RabbitMq:Host"]     ?? "localhost",
+            Port     = int.Parse(configuration["RabbitMq:Port"] ?? "5672"),
+            UserName = configuration["RabbitMq:Username"] ?? "guest",
+            Password = configuration["RabbitMq:Password"] ?? "guest",
         });
 
         // ── Shared IConnection for IRabbitMqPublisher (used by Persistor handlers) ──
@@ -39,6 +39,4 @@ public static class DependencyInjection
         // ── MainWorker — the single IHostedService ─────────────────
         services.AddHostedService<MainWorker>();
 
-        return services;
-    }
-}
+        return services

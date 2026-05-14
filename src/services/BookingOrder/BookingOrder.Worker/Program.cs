@@ -4,6 +4,7 @@ using BookingOrder.Infrastructure;
 using BookingOrder.Worker.Extensions;
 using FluentValidation;
 using MediatR;
+using Microsoft.Extensions.Hosting;
 using RentPakHaji.Common.Application.Behaviours;
 using Serilog;
 using Serilog.Events;
@@ -51,7 +52,4 @@ catch (Exception ex)
 {
     Log.Fatal(ex, "BookingOrder Worker terminated unexpectedly");
 }
-finally
-{
-    Log.CloseAndFlush();
-}
+f
