@@ -11,7 +11,7 @@
 --
 --  Cross-service patterns:
 --    ✓ Denormalized snapshots → Tidak ada FK lintas DB
---    ✓ transactionId          → Saga/event correlation
+--    ✓ transaction_id         → Saga/event correlation ID
 --    ✓ NFC gate integration   → journey_pool_event dari MQTT/NFC gateway
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS journey (
     return_odometer         INT,            -- odometer saat kendaraan dikembalikan
 
     -- Saga correlation
-    transaction_id          VARCHAR(100)    NOT NULL,   -- [SERA: transactionId]
+    transaction_id          VARCHAR(100)    NOT NULL,   -- saga/event correlation ID
 
     -- Audit
     created_at              TIMESTAMPTZ     NOT NULL DEFAULT NOW(),

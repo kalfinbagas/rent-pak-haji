@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>BookingOrder.Worker</RootNamespace>
+    <UserSecretsId>bookingorder-worker-dev</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Domain + Application (Persistors, Usecase contracts) -->
+    <ProjectReference Include="..\BookingOrder.Application\BookingOrder.Application.csproj" />
+    <!-- Infrastructure (DbContext, Services, RabbitMQ DI) -->
+    <ProjectReference Include="..\BookingOrder.Infrastructure\BookingOrder.Infrastructure.csproj" />
+    <!-- Common libs -->
+    <ProjectReference Include="..\..\..\..\libs\common\RentPakHaji.Common.Application\RentPakHaji.Common.Application.csproj" />
+    <ProjectReference Include="..\..\..\..\libs\common\RentPakHaji.Common.Broker\RentPakHaji.Common.Broker.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MediatR" Version="12.*" />
+    <PackageReference Include="MediatR.Extensions.Microsoft.DependencyInjection" Version="12.*" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="11.*" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="8.*" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.*" />
+    <PackageReference Include="Serilog.Sinks.Seq" Version="8.*" />
+    <PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="8.*" />
+  </ItemGroup>
+
+</Project>

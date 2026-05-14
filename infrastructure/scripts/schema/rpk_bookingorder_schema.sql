@@ -11,12 +11,12 @@
 --    4. vehicle_assignment     → Assignment kendaraan + driver + NFC saat dispatch
 --    5. outbox_message         → Reliable event delivery (Outbox pattern)
 --
---  Cross-service patterns (dari SERA):
---    ✓ transactionId           → Saga/event correlation ID (SERA: transactionId)
---    ✓ Sequence field          → Riwayat reassignment tetap terjaga (SERA pattern)
---    ✓ NumberOfVehicles        → Support multi-unit per line (SERA: jumlah unit)
---    ✓ Denormalized snapshots  → Tidak ada FK lintas DB (SERA denorm pattern)
---    ✓ IdempotencyKey          → Cegah double-submit (SERA: uniqueKey pattern)
+--  Cross-service patterns:
+--    ✓ transaction_id          → Saga/event correlation ID
+--    ✓ Sequence field          → Riwayat reassignment tetap terjaga
+--    ✓ NumberOfVehicles        → Support multi-unit per order
+--    ✓ Denormalized snapshots  → Tidak ada FK lintas DB
+--    ✓ IdempotencyKey          → Cegah double-submit
 --    ✓ AssignmentStatus        → Terpisah dari Status utama agar history terjaga
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -35,6 +35,20 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
+  CREATE TYPE service_type_enum AS ENUM (
+    'SELF_DRIVE',   -- customer mengemudi sendiri, durasi kelipatan 24 jam min 1 hari
+    'WITH_DRIVER'   -- disertai driver, durasi pilihan: 4/6/8/12/16 jam atau multi-day stay
+  );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE expedition_type_enum AS ENUM (
+    'SELF_SERVICE',  -- customer handle sendiri (ambil/kembalikan ke pool)
+    'EXPEDITION'     -- operator antar/jemput ke alamat customer (biaya ekspedisi berlaku)
+  );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
   CREATE TYPE assignment_status_main AS ENUM (
     'PENDING', 'DISPATCHED', 'ACTIVE', 'RETURNED', 'CANCELLED'
   );
@@ -48,73 +62,107 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ═══════════════════════════════════════════════════════════════
 -- TABEL 1: BOOKING_ORDER
--- Header order rental. Satu order bisa punya banyak detail line.
--- Semua data customer disimpan sebagai snapshot — tidak ada FK ke rpk_master.
+-- Header order rental.
+-- Menyimpan: info customer (snapshot), spesifikasi kendaraan, pricing,
+-- window rental, dan semua field yang dibutuhkan untuk stok & pembayaran.
+-- Satu order selalu punya tepat 2 booking_order_detail: START dan END.
 -- ═══════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS booking_order (
     id                  UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
 
     -- Kode booking yang tampil ke user
-    booking_code        VARCHAR(20)     UNIQUE NOT NULL,
     -- Format: RPH-YYYYMMDD-XXXX  e.g. RPH-20260509-0001
-    -- Generate di application layer sebelum INSERT
+    booking_code        VARCHAR(20)     UNIQUE NOT NULL,
 
-    -- Customer snapshot (dari Master Service via event — tidak ada FK ke rpk_master)
+    -- Tipe service [BUSINESS RULE]
+    -- SELF_DRIVE : durasi kelipatan 24 jam, min 1 hari, akun terverifikasi
+    -- WITH_DRIVER: pilihan durasi 4/6/8/12/16 jam atau stay multi-day
+    service_type        service_type_enum NOT NULL,
+
+    -- Customer snapshot — tidak ada FK ke rpk_master
     customer_id         UUID            NOT NULL,
-    customer_name       VARCHAR(150)    NOT NULL,    -- snapshot saat order dibuat
-    customer_phone      VARCHAR(20)     NOT NULL,    -- snapshot
-    customer_email      VARCHAR(150),                -- snapshot, nullable
+    customer_name       VARCHAR(150)    NOT NULL,
+    customer_phone      VARCHAR(20)     NOT NULL,
+    customer_email      VARCHAR(150),
+
+    -- ─── SPESIFIKASI KENDARAAN (permintaan customer) ───────────
+    vehicle_type        VARCHAR(20)     NOT NULL CHECK (vehicle_type IN ('CAR','MOTORCYCLE')),
+    vehicle_category    VARCHAR(30),                 -- SUV, MPV, Matic, Bebek — opsional filter
+    number_of_vehicles  INT             NOT NULL DEFAULT 1,
+
+    -- ─── KENDARAAN YANG DI-ASSIGN (diisi operator saat dispatch) ─
+    -- NULL saat order dibuat, diupdate setelah operator assign unit
+    assigned_vehicle_id             UUID,
+    vehicle_registration_number     VARCHAR(20),     -- plat nomor, e.g. B 1234 ABC
+    vehicle_brand                   VARCHAR(50),     -- snapshot: Toyota, Honda, dll
+    vehicle_model                   VARCHAR(50),     -- snapshot: Avanza, Brio, dll
+    vehicle_color                   VARCHAR(30),     -- snapshot: Putih, Hitam, dll
+
+    -- ─── DRIVER YANG DI-ASSIGN (diisi operator saat dispatch) ───
+    -- NULL untuk Self Drive atau sebelum dispatch
+    assigned_driver_id              UUID,
+    driver_name                     VARCHAR(150),    -- snapshot nama driver
+    driver_phone                    VARCHAR(20),     -- snapshot nomor HP driver
+
+    -- ─── WINDOW RENTAL (UTC) ───────────────────────────────────
+    -- SELF_DRIVE : end = start + (duration_days × 24 jam), end time = start time
+    --              Contoh: 1 Jan 10:00 + 1 hari = 2 Jan 10:00
+    -- WITH_DRIVER: end = start + with_driver_duration_hours
+    start_rental_at     TIMESTAMPTZ     NOT NULL,
+    end_rental_at       TIMESTAMPTZ     NOT NULL,
+    start_timezone      VARCHAR(60)     NOT NULL DEFAULT 'Asia/Jakarta',
+    end_timezone        VARCHAR(60)     NOT NULL DEFAULT 'Asia/Jakarta',
+
+    -- ─── DURASI & HARGA ────────────────────────────────────────
+    duration_days       INT             NOT NULL,    -- hari (Self Drive) atau 1 (With Driver)
+    daily_rate          DECIMAL(18,2)   NOT NULL,    -- harga snapshot — tidak berubah setelah order
+    subtotal_rental     DECIMAL(18,2)   NOT NULL,    -- duration_days × daily_rate × number_of_vehicles
+
+    -- ─── WITH DRIVER OPTIONS ───────────────────────────────────
+    with_driver                 BOOLEAN         NOT NULL DEFAULT FALSE,
+    driver_daily_rate           DECIMAL(18,2),
+    with_driver_duration_hours  INT             CHECK (with_driver_duration_hours IN (4,6,8,12,16)),
+    is_out_of_town              BOOLEAN         NOT NULL DEFAULT FALSE,
+    out_of_town_surcharge       DECIMAL(18,2)   NOT NULL DEFAULT 0,
 
     -- Status order
     status              booking_status  NOT NULL DEFAULT 'AWAITING_PAYMENT',
 
-    -- Pembayaran
-    total_amount        DECIMAL(18,2)   NOT NULL,    -- total setelah semua diskon
-    subtotal_amount     DECIMAL(18,2)   NOT NULL,    -- sebelum diskon
+    -- ─── PEMBAYARAN ────────────────────────────────────────────
+    -- total = subtotal_rental + out_of_town_surcharge
+    --       + start_expedition_fee + end_expedition_fee
+    --       + tax - voucher_discount
+    subtotal_amount     DECIMAL(18,2)   NOT NULL,    -- sebelum tax & diskon
     tax_amount          DECIMAL(18,2)   NOT NULL DEFAULT 0,
+    total_amount        DECIMAL(18,2)   NOT NULL,    -- total akhir yang dibayar
 
-    -- Voucher (jika dipakai)
-    voucher_code        VARCHAR(50),                 -- kode voucher yang dipakai
+    -- Voucher
+    voucher_code        VARCHAR(50),
     voucher_discount    DECIMAL(18,2)   NOT NULL DEFAULT 0,
-
-    -- Special price flag
     has_special_price   BOOLEAN         NOT NULL DEFAULT FALSE,
 
-    -- Idempotency — cegah double submit dari client
-    -- [SERA: uniqueKey pattern]
+    -- Idempotency key — cegah double-submit
     idempotency_key     VARCHAR(100)    UNIQUE NOT NULL,
 
-    -- Saga correlation [SERA: transactionId]
+    -- Saga/event correlation ID
     transaction_id      VARCHAR(100)    NOT NULL,
 
-    -- Catatan operator
     operator_notes      TEXT,
 
     -- ─── PAYMENT EXPIRY ───────────────────────────────────────
-    -- Deadline pembayaran. Diset saat order dibuat: NOW() + payment_window (default 15 menit).
-    -- Selama payment_expires_at > NOW() dan status = AWAITING_PAYMENT:
-    --   • Order masih bisa dibayar
-    --   • vehicle_soft_booking status = ACTIVE → stok berkurang (soft hold)
-    -- Jika payment_expires_at terlewat tanpa pembayaran:
-    --   • Scheduler → UPDATE status = EXPIRED
-    --   • Scheduler → UPDATE vehicle_soft_booking status = EXPIRED
-    --   • Publish BookingExpired + SoftBookingReleased → Inventory kembalikan stok
-    -- Jika dibayar sebelum expires_at:
-    --   • UPDATE status = PAID, paid_at = NOW()
-    --   • UPDATE vehicle_soft_booking status = CONVERTED → stok benar-benar terkurang
-    --   • Publish PaymentSuccess + SoftBookingConverted → Inventory update replicated record
-    payment_expires_at  TIMESTAMPTZ     NOT NULL,    -- deadline bayar, sama dengan soft_booking.expires_at
+    -- Diset saat order dibuat: NOW() + 15 menit
+    -- Scheduler cek setiap menit via v_expiring_orders
+    payment_expires_at  TIMESTAMPTZ     NOT NULL,
 
-    -- Timestamps lifecycle
-    paid_at             TIMESTAMPTZ,                 -- kapan pembayaran berhasil dikonfirmasi
-    confirmed_at        TIMESTAMPTZ,                 -- kapan operator konfirmasi dispatch-ready
-    completed_at        TIMESTAMPTZ,                 -- kapan rental selesai (journey COMPLETED)
-    expired_at          TIMESTAMPTZ,                 -- kapan order di-expire oleh scheduler
-    cancelled_at        TIMESTAMPTZ,                 -- kapan order dibatalkan (post-payment cancel)
+    -- Lifecycle timestamps
+    paid_at             TIMESTAMPTZ,
+    confirmed_at        TIMESTAMPTZ,
+    completed_at        TIMESTAMPTZ,
+    expired_at          TIMESTAMPTZ,
+    cancelled_at        TIMESTAMPTZ,
     cancellation_reason TEXT,
 
-    -- Audit
     created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
@@ -122,75 +170,67 @@ CREATE TABLE IF NOT EXISTS booking_order (
 CREATE INDEX IF NOT EXISTS idx_bo_customer   ON booking_order(customer_id);
 CREATE INDEX IF NOT EXISTS idx_bo_status     ON booking_order(status);
 CREATE INDEX IF NOT EXISTS idx_bo_code       ON booking_order(booking_code);
+CREATE INDEX IF NOT EXISTS idx_bo_vehicle    ON booking_order(assigned_vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_bo_driver     ON booking_order(assigned_driver_id);
+CREATE INDEX IF NOT EXISTS idx_bo_start      ON booking_order(start_rental_at);
 CREATE INDEX IF NOT EXISTS idx_bo_created    ON booking_order(created_at DESC);
--- Partial index khusus scheduler expiry — hanya baris AWAITING_PAYMENT yang dipantau
 CREATE INDEX IF NOT EXISTS idx_bo_expires    ON booking_order(payment_expires_at)
     WHERE status = 'AWAITING_PAYMENT';
-COMMENT ON TABLE booking_order IS 'Header order rental — customer snapshot, status, total amount, voucher. Satu order → banyak booking_order_detail';
+COMMENT ON TABLE booking_order IS 'Header order rental — customer, kendaraan, pricing, window waktu. Selalu punya 2 booking_order_detail (START + END).';
 
 -- ═══════════════════════════════════════════════════════════════
 -- TABEL 2: BOOKING_ORDER_DETAIL
--- Line item per kendaraan dalam satu order.
--- Menyimpan: tipe kendaraan, window waktu rental (UTC), lokasi pickup/return,
--- dan harga snapshot saat booking dibuat.
+-- Location record per titik serah-terima kendaraan.
+-- 1 booking_order selalu punya tepat 2 record:
+--   detail_type = 'START' → kapan & dimana unit diserahkan ke customer
+--   detail_type = 'END'   → kapan & dimana unit dikembalikan dari customer
+--
+-- Expedition type per titik (independen):
+--   SELF_SERVICE → customer ambil/kembalikan sendiri di pool
+--   EXPEDITION   → operator antar/jemput ke/dari alamat customer
 -- ═══════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS booking_order_detail (
     id                  UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
     booking_order_id    UUID            NOT NULL REFERENCES booking_order(id) ON DELETE CASCADE,
-    line_number         INT             NOT NULL,    -- urutan line dalam order (1, 2, ...)
 
-    -- Spesifikasi kendaraan yang diminta
-    vehicle_type        VARCHAR(20)     NOT NULL CHECK (vehicle_type IN ('CAR','MOTORCYCLE')),
-    vehicle_category    VARCHAR(30),                 -- SUV, MPV, Matic, Bebek — opsional filter
+    -- START = awal rental, END = akhir rental
+    detail_type         VARCHAR(5)      NOT NULL CHECK (detail_type IN ('START', 'END')),
 
-    -- Jumlah unit (support multi-unit per line — dari SERA NumberOfVehicles pattern)
-    number_of_vehicles  INT             NOT NULL DEFAULT 1,
+    -- Waktu serah-terima untuk titik ini
+    -- START → = booking_order.start_rental_at
+    -- END   → = booking_order.end_rental_at
+    scheduled_at        TIMESTAMPTZ     NOT NULL,
+    timezone            VARCHAR(60)     NOT NULL DEFAULT 'Asia/Jakarta',
 
-    -- Window rental — disimpan dalam UTC (SERA timezone pattern)
-    start_rental_at     TIMESTAMPTZ     NOT NULL,    -- waktu mulai dalam UTC
-    end_rental_at       TIMESTAMPTZ     NOT NULL,    -- waktu selesai dalam UTC
-    start_timezone      VARCHAR(60)     NOT NULL DEFAULT 'Asia/Jakarta',
-    -- e.g. Asia/Jakarta (WIB), Asia/Makassar (WITA), Asia/Jayapura (WIT)
-    end_timezone        VARCHAR(60)     NOT NULL DEFAULT 'Asia/Jakarta',
-    -- return timezone bisa berbeda dari pickup (one-way lintas zone)
+    -- ─── TIPE EKSPEDISI ────────────────────────────────────────
+    expedition_type     expedition_type_enum NOT NULL DEFAULT 'SELF_SERVICE',
 
-    -- Lokasi pickup
-    pickup_location_id      UUID,                   -- reference ke pool (no FK)
-    pickup_location_name    VARCHAR(200)    NOT NULL,
-    pickup_latitude         DECIMAL(11,8)   NOT NULL DEFAULT 0,
-    pickup_longitude        DECIMAL(11,8)   NOT NULL DEFAULT 0,
+    -- Pool referensi (selalu diisi — pool asal/tujuan unit)
+    pool_location_id    UUID            NOT NULL,
+    pool_location_name  VARCHAR(150)    NOT NULL,   -- snapshot
 
-    -- Lokasi return (bisa berbeda dari pickup — one-way rental)
-    return_location_id      UUID,                   -- reference ke pool (no FK)
-    return_location_name    VARCHAR(200)    NOT NULL,
-    return_latitude         DECIMAL(11,8)   NOT NULL DEFAULT 0,
-    return_longitude        DECIMAL(11,8)   NOT NULL DEFAULT 0,
+    -- Alamat customer (diisi hanya jika expedition_type = EXPEDITION)
+    address             TEXT,
+    city                VARCHAR(100),
+    district            VARCHAR(100),               -- kecamatan (untuk tarif ekspedisi)
+    latitude            DECIMAL(11,8),
+    longitude           DECIMAL(11,8),
 
-    -- Pool utama untuk buku stok
-    pool_location_id        UUID            NOT NULL,
-    pool_location_name      VARCHAR(150)    NOT NULL,  -- snapshot dari Master event
+    -- Biaya ekspedisi titik ini (0 jika SELF_SERVICE)
+    expedition_fee      DECIMAL(18,2)   NOT NULL DEFAULT 0,
 
-    -- Durasi & harga
-    duration_days       INT             NOT NULL,    -- dibulatkan ke atas (CEIL)
-    daily_rate          DECIMAL(18,2)   NOT NULL,    -- harga snapshot saat booking — tidak berubah
-    subtotal            DECIMAL(18,2)   NOT NULL,    -- duration_days × daily_rate × number_of_vehicles
-
-    -- Opsi tambahan
-    with_driver         BOOLEAN         NOT NULL DEFAULT FALSE,
-    driver_daily_rate   DECIMAL(18,2),               -- harga driver per hari (jika with_driver)
-
-    -- Audit
     created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
 
-    UNIQUE(booking_order_id, line_number)
+    -- Setiap order hanya punya 1 START dan 1 END
+    UNIQUE(booking_order_id, detail_type)
 );
 
 CREATE INDEX IF NOT EXISTS idx_bod_order     ON booking_order_detail(booking_order_id);
+CREATE INDEX IF NOT EXISTS idx_bod_type      ON booking_order_detail(detail_type);
 CREATE INDEX IF NOT EXISTS idx_bod_pool      ON booking_order_detail(pool_location_id);
-CREATE INDEX IF NOT EXISTS idx_bod_type      ON booking_order_detail(vehicle_type);
-CREATE INDEX IF NOT EXISTS idx_bod_start     ON booking_order_detail(start_rental_at);
-COMMENT ON TABLE booking_order_detail IS 'Line item per kendaraan dalam order — tipe, window waktu UTC, lokasi pickup/return, harga snapshot, jumlah unit';
+CREATE INDEX IF NOT EXISTS idx_bod_sched     ON booking_order_detail(scheduled_at);
+COMMENT ON TABLE booking_order_detail IS '2 record per order: START (antar/ambil) dan END (jemput/kembalikan). Menyimpan waktu & lokasi serah-terima + tipe ekspedisi per titik.';
 
 -- ═══════════════════════════════════════════════════════════════
 -- TABEL 3: VEHICLE_SOFT_BOOKING (di rpk_bookingorder)
@@ -198,7 +238,6 @@ COMMENT ON TABLE booking_order_detail IS 'Line item per kendaraan dalam order �
 -- Mengurangi effective stock selama payment window (default 15 menit).
 -- Jika tidak dibayar sebelum ExpiresAt → status EXPIRED, stok kembali.
 --
--- [SERA: VehicleSoftBooking pattern]
 -- Direplikasi ke rpk_vehicle via event SoftBookingCreated/Released
 -- untuk keperluan Inventory Service menghitung available stock.
 -- ═══════════════════════════════════════════════════════════════
@@ -208,9 +247,10 @@ CREATE TABLE IF NOT EXISTS vehicle_soft_booking (
 
     booking_order_id    UUID            NOT NULL REFERENCES booking_order(id) ON DELETE CASCADE,
     booking_code        VARCHAR(20)     NOT NULL,    -- denorm untuk tracing tanpa join
-    booking_detail_id   UUID            NOT NULL REFERENCES booking_order_detail(id),
 
     -- Spesifikasi stok yang di-hold
+    -- vehicle_type dari booking_order header
+    -- pool_location_id dari booking_order_detail WHERE detail_type = 'START'
     vehicle_type        VARCHAR(20)     NOT NULL,
     pool_location_id    UUID            NOT NULL,
     pool_location_name  VARCHAR(150)    NOT NULL,    -- snapshot
@@ -219,7 +259,7 @@ CREATE TABLE IF NOT EXISTS vehicle_soft_booking (
     start_rental_at     TIMESTAMPTZ     NOT NULL,
     end_rental_at       TIMESTAMPTZ     NOT NULL,
 
-    -- Jumlah unit yang di-hold [SERA: NumberOfVehicles]
+    -- Jumlah unit yang di-hold
     number_of_vehicles  INT             NOT NULL DEFAULT 1,
 
     -- Expiry — auto release jika tidak dibayar
@@ -227,10 +267,10 @@ CREATE TABLE IF NOT EXISTS vehicle_soft_booking (
 
     status              soft_booking_status NOT NULL DEFAULT 'ACTIVE',
 
-    -- [SERA: Sequence] — urutan soft booking dalam satu order (support multi-line)
+    -- urutan soft booking dalam satu order (support multi-line)
     sequence            INT             NOT NULL DEFAULT 1,
 
-    -- [SERA: transactionId] — saga correlation untuk Inventory Service
+    -- saga/event correlation ID — digunakan Inventory Service
     transaction_id      VARCHAR(100)    NOT NULL,
 
     created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
@@ -243,7 +283,7 @@ CREATE INDEX IF NOT EXISTS idx_vsb_status    ON vehicle_soft_booking(status);
 CREATE INDEX IF NOT EXISTS idx_vsb_expires   ON vehicle_soft_booking(expires_at)
     WHERE status = 'ACTIVE';   -- partial index — hanya ACTIVE yang perlu dipantau scheduler
 CREATE INDEX IF NOT EXISTS idx_vsb_window    ON vehicle_soft_booking(start_rental_at, end_rental_at);
-COMMENT ON TABLE vehicle_soft_booking IS 'Soft hold stok selama payment window (15 menit). Direplikasi ke rpk_vehicle via event. SERA: VehicleSoftBooking pattern';
+COMMENT ON TABLE vehicle_soft_booking IS 'Soft hold stok selama payment window (15 menit). Direplikasi ke rpk_vehicle via event SoftBookingCreated/Released. INSERT idempotent.';
 
 -- ═══════════════════════════════════════════════════════════════
 -- TABEL 4: VEHICLE_ASSIGNMENT (di rpk_bookingorder)
@@ -251,7 +291,6 @@ COMMENT ON TABLE vehicle_soft_booking IS 'Soft hold stok selama payment window (
 -- Berisi snapshot kendaraan, driver, NFC card.
 -- BookingOrder Service butuh ini untuk tampilkan detail dispatch ke customer.
 --
--- [SERA: VehicleAssignment pattern]
 -- Direplikasi ke rpk_vehicle via event VehicleAssigned/AssignmentCancelled.
 -- ═══════════════════════════════════════════════════════════════
 
@@ -296,22 +335,21 @@ CREATE TABLE IF NOT EXISTS vehicle_assignment (
     -- Status utama assignment
     status              assignment_status_main NOT NULL DEFAULT 'PENDING',
 
-    -- [SERA: AssignmentStatus] — terpisah dari status utama agar history reassignment terjaga
+    -- status assignment numerik, terpisah dari status utama agar history reassignment terjaga
     -- 0=ASSIGNED, 1=RELEASED, 2=REJECTED
     assignment_status   SMALLINT        NOT NULL DEFAULT 0,
 
-    -- [SERA: Sequence] — urutan assignment, menyimpan riwayat jika kendaraan diganti
+    -- urutan assignment — bertambah setiap kali kendaraan diganti (history terjaga)
     sequence            INT             NOT NULL DEFAULT 1,
 
     -- Alasan release/reject
-    -- [SERA: ReasonType] — kategori alasan
-    release_reason_type SMALLINT,
+    release_reason_type SMALLINT,   -- 0=Vehicle Issue, 1=Driver Issue, 2=Customer Cancel, 3=Operator Override
     -- 0=Vehicle Issue, 1=Driver Issue, 2=Customer Cancel, 3=Operator Override
     release_reason_note TEXT,
     released_at         TIMESTAMPTZ,
     released_by         VARCHAR(100),                -- username/ID operator
 
-    -- [SERA: transactionId] — saga ID saat dispatch flow
+    -- saga/event correlation ID — digunakan saat dispatch flow
     transaction_id      VARCHAR(100)    NOT NULL,
 
     created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
@@ -323,13 +361,13 @@ CREATE INDEX IF NOT EXISTS idx_va_vehicle    ON vehicle_assignment(vehicle_id);
 CREATE INDEX IF NOT EXISTS idx_va_status     ON vehicle_assignment(status);
 CREATE INDEX IF NOT EXISTS idx_va_nfc        ON vehicle_assignment(nfc_card_uid) WHERE nfc_card_uid IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_va_dispatch   ON vehicle_assignment(dispatch_pool_id);
-COMMENT ON TABLE vehicle_assignment IS 'Assignment kendaraan + driver + NFC ke booking. Direplikasi ke rpk_vehicle via event. SERA: VehicleAssignment pattern dengan Sequence + AssignmentStatus terpisah';
+COMMENT ON TABLE vehicle_assignment IS 'Assignment kendaraan + driver + NFC ke booking. Direplikasi ke rpk_vehicle via VehicleAssigned event. Sequence bertambah setiap kendaraan diganti.';
 
 -- ═══════════════════════════════════════════════════════════════
 -- TABEL 5: OUTBOX_MESSAGE
 -- Reliable event delivery — ditulis dalam transaksi yang sama dengan
 -- perubahan bisnis, kemudian di-publish ke RabbitMQ oleh Outbox Publisher.
--- Setiap service punya outbox sendiri (SERA & doc v9 pattern).
+-- Setiap service punya outbox sendiri (per-service isolation).
 -- ═══════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS outbox_message (
@@ -343,7 +381,7 @@ CREATE TABLE IF NOT EXISTS outbox_message (
     retry_count     INT         NOT NULL DEFAULT 0,
     max_retry       INT         NOT NULL DEFAULT 3,
     error_message   TEXT,
-    -- Correlation untuk tracing [SERA: transactionId]
+    -- saga/event correlation ID untuk tracing
     correlation_id  VARCHAR(100),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     processed_at    TIMESTAMPTZ,

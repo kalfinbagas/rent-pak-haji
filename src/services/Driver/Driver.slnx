@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Driver.Domain\Driver.Domain.csproj" />
+  <Project Path="Driver.Application\Driver.Application.csproj" />
+  <Project Path="Driver.Infrastructure\Driver.Infrastructure.csproj" />
+  <Project Path="Driver.Api\Driver.Api.csproj" />
+</Solution>

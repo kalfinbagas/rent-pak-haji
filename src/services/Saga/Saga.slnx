@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Saga.Domain\Saga.Domain.csproj" />
+  <Project Path="Saga.Application\Saga.Application.csproj" />
+  <Project Path="Saga.Infrastructure\Saga.Infrastructure.csproj" />
+  <Project Path="Saga.Api\Saga.Api.csproj" />
+</Solution>

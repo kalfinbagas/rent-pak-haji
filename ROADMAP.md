@@ -13,8 +13,42 @@
 
 ---
 
-## PHASE 0 — Prerequisites (Instalasi Tools)
-> Semua sudah terinstall. Verifikasi dengan command di bawah.
+## Struktur Monorepo
+
+```
+rent-pak-haji/
+├── src/
+│   └── services/
+│       ├── BookingOrder/           ← .NET Clean Architecture
+│       │   ├── BookingOrder.Domain/
+│       │   ├── BookingOrder.Application/
+│       │   ├── BookingOrder.Infrastructure/
+│       │   └── BookingOrder.Api/
+│       ├── Vehicle/
+│       ├── Driver/
+│       ├── Journey/
+│       ├── Payment/
+│       ├── Master/
+│       └── Saga/
+├── nest-services/
+│   ├── notification-service/
+│   ├── voucher-service/
+│   ├── api-gateway/
+│   ├── dashboard-service/
+│   └── iot-gateway/
+├── libs/
+│   └── common/                     ← Git submodule (rent-pak-haji-common)
+├── infrastructure/
+│   ├── scripts/
+│   │   ├── init-db.sql
+│   │   └── schema/
+│   └── mosquitto/
+└── docs/
+```
+
+---
+
+## PHASE 0 — Prerequisites (Instalasi Tools) ✅
 
 ```bash
 docker --version          # Docker Engine 27.x+
@@ -68,10 +102,10 @@ git --version             # Git 2.x+
 - [x] `infrastructure/scripts/init-db.sql` — 9 database
 - [x] `rpk_master_schema.sql` — pool_location, customer, vehicle_driver_pair, approval_matrix, nfc_card, voucher
 - [x] `rpk_vehicle_schema.sql` — 15 tabel (master_vehicle, movement, preparation, transfer, allocation, standby, soft_booking, assignment, dll)
-- [x] `rpk_bookingorder_schema.sql` — 5 tabel (booking_order + payment_expires_at, detail, soft_booking, assignment)
-- [x] `rpk_journey_schema.sql` — journey, journey_pool_event
-- [x] `rpk_driver_schema.sql` — driver, driver_availability
-- [x] `rpk_payment_schema.sql` — invoice, payment (VA + QRIS), refund
+- [x] `rpk_bookingorder_schema.sql` — booking_order + payment_expires_at, detail, soft_booking, assignment, outbox
+- [x] `rpk_journey_schema.sql` — journey, journey_pool_event, outbox
+- [x] `rpk_driver_schema.sql` — driver, driver_availability, outbox
+- [x] `rpk_payment_schema.sql` — invoice, payment (VA + QRIS), refund, outbox
 - [x] `rpk_notification_schema.sql` — 3 tabel + 7 seed template (WA, Email, Push)
 - [x] Semua 9 database verified di PostgreSQL
 - [x] Semua tabel verified per database
@@ -79,122 +113,115 @@ git --version             # Git 2.x+
 
 ---
 
-## PHASE 3 — Repository & Project Structure
+## PHASE 3 — Repository & Project Structure ✅
 
-- [ ] Buat GitHub repository `rent-pak-haji` (main)
-- [ ] Buat GitHub repository `rent-pak-haji-common` (.NET shared lib)
-- [ ] Clone parent repository ke `C:\Projects\rent-pak-haji`
-- [ ] Inisialisasi folder structure:
-  ```
-  rent-pak-haji/
-  ├── microservices/          ← .NET API projects (entry points)
-  ├── modularized-code/       ← .NET business logic (Clean Architecture)
-  │   ├── be-master-management/
-  │   ├── be-vehicle-management/
-  │   ├── be-booking-management/
-  │   ├── be-journey-management/
-  │   ├── be-driver-management/
-  │   ├── be-payment-management/
-  │   └── be-saga-orchestrator/
-  ├── nest-services/          ← NestJS services
-  ├── libs/                   ← Git submodule (common library)
-  ├── infrastructure/
-  │   ├── scripts/schema/     ← SQL schema files ✅
-  │   └── mosquitto/          ← MQTT config
-  └── docs/                   ← Dokumentasi & diagram
-  ```
-- [ ] Setup Git submodule untuk common library:
-  ```bash
-  git submodule add https://github.com/kalfinbagas/rent-pak-haji-common.git libs/common
-  git submodule init && git submodule update
-  ```
+- [x] Buat GitHub repository `rent-pak-haji` (main — monorepo)
+- [x] Buat GitHub repository `rent-pak-haji-common` (.NET shared lib)
+- [x] Git multi-account setup (work global / personal via includeIf)
+- [x] SSH key per GitHub account (`id_ed25519_personal` + Host alias `github-personal`)
+- [x] Inisialisasi folder structure monorepo
+- [x] Git submodule `libs/common` → `rent-pak-haji-common`
+- [x] Push main repo ke GitHub
+- [x] `.gitignore` dikonfigurasi (.NET + Node + Docker + OS + IDE)
 
 ---
 
-## PHASE 4 — Common Library (.NET)
-> Shared library yang dipakai semua .NET services. Buat di `libs/common`.
+## PHASE 4 — Common Library (.NET) ✅
 
-### 4.1 Common.Domain
-- [ ] `BaseEntity` — Id (UUID), CreatedAt, UpdatedAt
-- [ ] `AuditableEntity` — extends BaseEntity + CreatedBy, ModifiedBy, Version
-- [ ] `IDomainEvent` interface
-- [ ] `IUnitOfWork` interface
+> Shared library di `libs/common` → repo terpisah `rent-pak-haji-common`, di-link sebagai submodule.
 
-### 4.2 Common.Application
-- [ ] `ICommand` / `ICommandHandler<T>` interface (MediatR wrapper)
-- [ ] `IQuery<T>` / `IQueryHandler<T>` interface
-- [ ] `Result<T>` pattern — success/failure tanpa throw exception
-- [ ] `PagedResult<T>` untuk pagination
+### 4.1 Common.Domain ✅
+- [x] `BaseEntity` — Id (UUID), DomainEvents list
+- [x] `AuditableEntity` — extends BaseEntity + CreatedAt, UpdatedAt, CreatedBy, UpdatedBy, IsActive, Version
+- [x] `IDomainEvent` / `DomainEvent` base record (implements INotification)
+- [x] `IUnitOfWork` interface
 
-### 4.3 Common.Broker (RabbitMQ)
-- [ ] `IRabbitMqPublisher` — publish event ke exchange
-- [ ] `RabbitMqConsumer` base class — auto-create queue + DLQ binding
-- [ ] Outbox publisher background service (Coravel scheduler)
-- [ ] Event deserializer / serializer (System.Text.Json)
+### 4.2 Common.Application ✅
+- [x] `ICommand<TResponse>` / `ICommand` interface (MediatR wrapper)
+- [x] `ICommandHandler<TCommand, TResponse>` / `ICommandHandler<TCommand>`
+- [x] `IQuery<TResponse>` / `IQueryHandler<TQuery, TResponse>`
+- [x] `Result<T>` pattern — success/failure tanpa throw exception
+- [x] `PagedResult<T>` untuk pagination
+- [x] `ValidationBehaviour<TRequest, TResponse>` — MediatR pipeline (FluentValidation)
 
-### 4.4 Common.Contracts (Event Payloads — antar service)
-- [ ] `SoftBookingCreatedEvent` { BookingOrderId, BookingCode, VehicleType, PoolLocationId, PoolLocationName, StartRentalAt, EndRentalAt, ExpiresAt, NumberOfVehicles, TransactionId }
-- [ ] `SoftBookingReleasedEvent` { BookingOrderId, BookingCode, TransactionId }
-- [ ] `SoftBookingConvertedEvent` { BookingOrderId, BookingCode, TransactionId }
-- [ ] `VehicleAssignedEvent` { VehicleAssignmentId, BookingCode, VehicleId, LicensePlate, VehicleType, VehicleCategory, Brand, Model, DriverId, DriverName, NfcCardUid, PoolLocationId, PoolLocationName, TransactionId }
-- [ ] `AssignmentCancelledEvent` { VehicleAssignmentId, BookingCode, TransactionId }
-- [ ] `PaymentSuccessEvent` { InvoiceId, BookingOrderId, BookingCode, Amount, TransactionId }
-- [ ] `BookingExpiredEvent` { BookingOrderId, BookingCode, TransactionId }
-- [ ] `BookingCancelledEvent` { BookingOrderId, BookingCode, CancellationReason, TransactionId }
-- [ ] `VehicleDispatchedEvent` { JourneyId, BookingCode, VehicleId, LicensePlate, PoolLocationId, TransactionId }
-- [ ] `VehicleReturnedEvent` { JourneyId, BookingCode, VehicleId, LicensePlate, ReturnPoolId, TransactionId }
-- [ ] `NotificationRequestedEvent` { EventType, RecipientId, RecipientPhone, RecipientEmail, Channel, Payload, BookingCode }
+### 4.3 Common.Infrastructure ✅
+- [x] `BaseDbContext` — EF Core + auto audit fields + domain events → outbox
+- [x] `OutboxMessage` entity
+- [x] `OutboxPublisher<TDbContext>` — background service (polling PENDING messages)
 
-### 4.5 Build & Verify
-- [ ] `dotnet build` semua project di libs/common
-- [ ] Tidak ada error
+### 4.4 Common.Broker ✅
+- [x] `IRabbitMqPublisher` interface
+- [x] `RabbitMqPublisher` — concrete implementation (System.Text.Json, persistent delivery)
+- [x] `RabbitMqConsumerBase<TMessage>` — base class consumer (auto ack/nack, DLQ-ready)
+
+### 4.5 Common.Contracts ✅
+- [x] `SoftBookingCreatedEvent`
+- [x] `SoftBookingReleasedEvent`
+- [x] `BookingOrderExpiredEvent`
+- [x] `PaymentSuccessEvent`
+- [x] `PaymentFailedEvent`
+- [x] `VehicleAssignmentCreatedEvent`
+
+### 4.6 Build & Push ✅
+- [x] `dotnet build RentPakHaji.Common.slnx` — Build succeeded (5 projects)
+- [x] Push ke `rent-pak-haji-common` (bin/obj excluded from tracking)
+- [x] Submodule reference di main repo diupdate ke commit terbaru
 
 ---
 
 ## PHASE 5 — .NET Services — Domain & Persistence Layer
-> Satu service = satu modul di `modularized-code/`. Setiap modul punya: Entity, Application, Infrastructure, Facade.
 
-### 5.1 Master Service (`be-master-management`)
-- [ ] Entity: `PoolLocation`, `Customer`, `NfcCard`, `VehicleDriverPair`, `ApprovalConfiguration`, `ApprovalMatrix`
-- [ ] `MasterDbContext` + EF Fluent Configuration
-- [ ] Migration: `InitialCreate`
-- [ ] `dotnet ef database update`
+> Scaffold di `src/services/`. Setiap service: Domain → Application → Infrastructure → Api.
 
-### 5.2 Vehicle Service (`be-vehicle-management`)
-- [ ] Entity: `MasterVehicle`, `VehicleCategory`, `VehicleTransmissionType`, `VehicleMovement`, `VehiclePreparation`, `VehicleTransfer`, `VehicleSoftBooking` (replicated), `VehicleAssignment` (replicated)
-- [ ] `VehicleDbContext` + EF Fluent Configuration
-- [ ] Migration: `InitialCreate`
-- [ ] `dotnet ef database update`
-
-### 5.3 BookingOrder Service (`be-booking-management`)
+### 5.1 BookingOrder Service (prioritas pertama)
+- [ ] Scaffold solution: `src/services/BookingOrder/`
+  ```bash
+  dotnet new sln -n BookingOrder
+  dotnet new classlib -n BookingOrder.Domain
+  dotnet new classlib -n BookingOrder.Application
+  dotnet new classlib -n BookingOrder.Infrastructure
+  dotnet new webapi -n BookingOrder.Api
+  ```
+- [ ] Add project references + reference ke `libs/common`
 - [ ] Entity: `BookingOrder`, `BookingOrderDetail`, `VehicleSoftBooking`, `VehicleAssignment`
-- [ ] `BookingOrderDbContext` + EF Fluent Configuration
-- [ ] Migration: `InitialCreate`
-- [ ] `dotnet ef database update`
+- [ ] `BookingOrderDbContext` extends `BaseDbContext` + Fluent Configuration
+- [ ] Migration: `InitialCreate` → `dotnet ef database update`
 
-### 5.4 Journey Service (`be-journey-management`)
-- [ ] Entity: `Journey`, `JourneyPoolEvent`
-- [ ] `JourneyDbContext` + EF Fluent Configuration
-- [ ] Migration: `InitialCreate`
-- [ ] `dotnet ef database update`
+### 5.2 Vehicle Service
+- [ ] Scaffold solution: `src/services/Vehicle/`
+- [ ] Entity: `MasterVehicle`, `VehicleCategory`, `VehicleMovement`, `VehiclePreparation`, `VehicleTransfer`, `VehicleSoftBooking` (replicated), `VehicleAssignment` (replicated), `VehicleStandby`
+- [ ] `VehicleDbContext` extends `BaseDbContext` + Fluent Configuration
+- [ ] Migration: `InitialCreate` → `dotnet ef database update`
 
-### 5.5 Driver Service (`be-driver-management`)
+### 5.3 Driver Service
+- [ ] Scaffold solution: `src/services/Driver/`
 - [ ] Entity: `Driver`, `DriverAvailability`
-- [ ] `DriverDbContext` + EF Fluent Configuration
-- [ ] Migration: `InitialCreate`
-- [ ] `dotnet ef database update`
+- [ ] `DriverDbContext` extends `BaseDbContext` + Fluent Configuration
+- [ ] Migration: `InitialCreate` → `dotnet ef database update`
 
-### 5.6 Payment Service (`be-payment-management`)
+### 5.4 Journey Service
+- [ ] Scaffold solution: `src/services/Journey/`
+- [ ] Entity: `Journey`, `JourneyPoolEvent`
+- [ ] `JourneyDbContext` extends `BaseDbContext` + Fluent Configuration
+- [ ] Migration: `InitialCreate` → `dotnet ef database update`
+
+### 5.5 Payment Service
+- [ ] Scaffold solution: `src/services/Payment/`
 - [ ] Entity: `Invoice`, `Payment`, `Refund`
-- [ ] `PaymentDbContext` + EF Fluent Configuration
-- [ ] Migration: `InitialCreate`
-- [ ] `dotnet ef database update`
+- [ ] `PaymentDbContext` extends `BaseDbContext` + Fluent Configuration
+- [ ] Migration: `InitialCreate` → `dotnet ef database update`
 
-### 5.7 Saga Orchestrator (`be-saga-orchestrator`)
+### 5.6 Master Service
+- [ ] Scaffold solution: `src/services/Master/`
+- [ ] Entity: `PoolLocation`, `Customer`, `NfcCard`, `VehicleDriverPair`, `ApprovalMatrix`
+- [ ] `MasterDbContext` extends `BaseDbContext` + Fluent Configuration
+- [ ] Migration: `InitialCreate` → `dotnet ef database update`
+
+### 5.7 Saga Orchestrator
+- [ ] Scaffold solution: `src/services/Saga/`
 - [ ] Entity: `SagaState`, `SagaStep`
-- [ ] `SagaDbContext`
-- [ ] Migration: `InitialCreate`
-- [ ] `dotnet ef database update`
+- [ ] `SagaDbContext` extends `BaseDbContext`
+- [ ] Migration: `InitialCreate` → `dotnet ef database update`
 
 ---
 
@@ -215,35 +242,29 @@ git --version             # Git 2.x+
   - SELECT FROM v_expiring_orders
   - UPDATE status=EXPIRED, expired_at=NOW()
   - UPDATE vehicle_soft_booking status=EXPIRED
-  - INSERT outbox_message → BookingExpiredEvent + SoftBookingReleasedEvent
+  - INSERT outbox_message → BookingOrderExpiredEvent + SoftBookingReleasedEvent
 - [ ] `AssignVehicleCommand` + Handler (operator assign kendaraan)
 - [ ] `GetBookingOrderQuery` + Handler
 
-### Vehicle / Inventory Service
-- [ ] `ReplicateSoftBookingConsumer` — consume SoftBookingCreatedEvent → INSERT replicated vehicle_soft_booking
-- [ ] `ReleaseSoftBookingConsumer` — consume SoftBookingReleasedEvent → UPDATE status=EXPIRED
-- [ ] `ConvertSoftBookingConsumer` — consume SoftBookingConvertedEvent → UPDATE status=CONVERTED
-- [ ] `ReplicateAssignmentConsumer` — consume VehicleAssignedEvent → INSERT replicated vehicle_assignment + UPDATE master_vehicle.status=READY
+### Vehicle Service
+- [ ] `ReplicateSoftBookingConsumer` — consume SoftBookingCreatedEvent
+- [ ] `ReleaseSoftBookingConsumer` — consume SoftBookingReleasedEvent
+- [ ] `ConvertSoftBookingConsumer` — consume PaymentSuccessEvent
+- [ ] `ReplicateAssignmentConsumer` — consume VehicleAssignmentCreatedEvent
 - [ ] `GetAvailableStockQuery` — hitung stok efektif: AVAILABLE - active soft bookings overlap
-- [ ] `UpdateVehicleStatusCommand` + Handler
 
 ### Journey Service
-- [ ] `CreateJourneyCommand` + Handler (triggered saat VehicleAssignedEvent)
+- [ ] `CreateJourneyCommand` + Handler (triggered saat VehicleAssignmentCreatedEvent)
 - [ ] `RecordPoolEventCommand` + Handler (NFC gate scan atau manual)
-  - Jika POOL_OUT → UPDATE journey.status=IN_PROGRESS, dispatched_at=NOW()
-  - Jika POOL_IN → UPDATE journey.status=COMPLETED, returned_at=NOW()
-  - INSERT outbox_message → VehicleDispatchedEvent / VehicleReturnedEvent
 
 ### Payment Service
-- [ ] `GenerateInvoiceCommand` + Handler (triggered saat PaymentSuccessEvent)
+- [ ] `GenerateInvoiceCommand` + Handler
 - [ ] `CreatePaymentCommand` + Handler (buat VA/QRIS via gateway)
 - [ ] `ProcessRefundCommand` + Handler
-- [ ] Payment gateway integration (Midtrans / Xendit SDK)
-  - [ ] Virtual Account callback endpoint
-  - [ ] QRIS callback endpoint
+- [ ] Payment gateway integration (Midtrans / Xendit)
 
 ### Master Service
-- [ ] `GetAvailableDriversQuery` — filter by pool + date + vehicle type capability
+- [ ] `GetAvailableDriversQuery`
 - [ ] `CreateVehicleDriverPairCommand` + Handler (dengan approval workflow)
 - [ ] `ProcessApprovalCommand` + Handler
 
@@ -264,10 +285,8 @@ git --version             # Git 2.x+
 | Saga Orchestrator | 5060 |
 
 ### Setup per service
-- [ ] `dotnet new webapi` untuk setiap microservice entry point di `microservices/`
-- [ ] Project reference ke modul business logic di `modularized-code/`
-- [ ] `Program.cs` — DI registration (DbContext, MediatR, Coravel, RabbitMQ, Redis, Serilog)
-- [ ] `appsettings.Development.json` — connection strings (lihat `.env.example`)
+- [ ] `Program.cs` — DI registration (DbContext, MediatR, Coravel, RabbitMQ, Redis, Serilog, OpenTelemetry)
+- [ ] `appsettings.Development.json` — connection strings
 - [ ] Controllers per resource
 - [ ] Swagger UI (`/swagger`)
 - [ ] Health check endpoint (`/health`)
@@ -276,51 +295,26 @@ git --version             # Git 2.x+
 
 ## PHASE 8 — NestJS Services
 
-### 8.1 Notification Service (NestJS + TypeORM)
-> Port: 3004 · DB: rpk_notification
-
+### 8.1 Notification Service (port 3004)
 - [ ] `nest new notification-service`
-- [ ] Install dependencies:
-  ```bash
-  npm install @nestjs/typeorm typeorm pg
-  npm install amqplib @types/amqplib
-  npm install @nestjs/config class-validator class-transformer
-  npm install nodemailer @types/nodemailer handlebars
-  npm install firebase-admin  # untuk FCM push notification
-  ```
 - [ ] TypeORM entity: `NotificationTemplate`, `NotificationLog`, `DeviceToken`
-- [ ] `NotificationConsumer` — consume `NotificationRequestedEvent` dari RabbitMQ
-- [ ] `WhatsAppProvider` — kirim via WA Business API (Fonnte / Wablas)
-- [ ] `EmailProvider` — kirim via Nodemailer / Mailgun
-- [ ] `PushProvider` — kirim via Firebase Admin SDK (FCM)
-- [ ] Retry scheduler (exponential backoff, `@nestjs/schedule`)
-- [ ] Mustache template renderer — render placeholder `{{booking_code}}` dll
+- [ ] `NotificationConsumer` — consume `NotificationRequestedEvent`
+- [ ] WhatsApp / Email / FCM push provider
+- [ ] Mustache template renderer
 
-### 8.2 Voucher Service (NestJS + TypeORM)
-> Port: 3002 · DB: rpk_master (tabel voucher, special_price)
-
+### 8.2 Voucher Service (port 3002)
 - [ ] `nest new voucher-service`
-- [ ] Install: `@nestjs/typeorm typeorm pg @nestjs/config ioredis`
-- [ ] `ValidateVoucherCommand` — cek kode, validity, usage limit, min order
-- [ ] `RedeemVoucherCommand` — increment current_usage
+- [ ] `ValidateVoucherCommand`, `RedeemVoucherCommand`
 - [ ] Redis caching untuk active vouchers
 
-### 8.3 API Gateway / BFF (NestJS)
-> Port: 3000 · Proxy ke semua .NET services
-
+### 8.3 API Gateway / BFF (port 3000)
 - [ ] `nest new api-gateway`
-- [ ] Install: `@nestjs/axios http-proxy-middleware`
-- [ ] Route proxy ke masing-masing .NET service
-- [ ] JWT authentication middleware
-- [ ] Rate limiting
+- [ ] Route proxy ke semua .NET services
+- [ ] JWT authentication middleware + rate limiting
 
-### 8.4 Dashboard Service (NestJS + WebSocket)
-> Port: 3001 · Real-time dashboard pool & stok
-
+### 8.4 Dashboard Service (port 3001)
 - [ ] `nest new dashboard-service`
-- [ ] Install: `@nestjs/websockets @nestjs/platform-socket.io socket.io`
-- [ ] RabbitMQ consumer untuk semua domain events
-- [ ] WebSocket gateway — broadcast event ke client (real-time update)
+- [ ] WebSocket gateway — broadcast domain events ke client
 - [ ] Pool stock aggregation endpoint
 
 ---
@@ -328,24 +322,20 @@ git --version             # Git 2.x+
 ## PHASE 9 — RabbitMQ Event Contracts
 
 ### Exchanges
-- [ ] `rpk.booking.events` (topic) — semua booking events
-- [ ] `rpk.inventory.events` (topic) — stok & vehicle events
-- [ ] `rpk.payment.events` (topic) — payment events
-- [ ] `rpk.journey.events` (topic) — dispatch & return events
-- [ ] `rpk.notification.commands` (direct) — kirim notifikasi
-- [ ] `rpk.saga.commands` (topic) — saga orchestration
-- [ ] `rpk.dlq` (topic) — dead letter queue
+- [ ] `rpk.booking` (topic)
+- [ ] `rpk.vehicle` (topic)
+- [ ] `rpk.payment` (topic)
+- [ ] `rpk.journey` (topic)
+- [ ] `rpk.notification` (direct)
+- [ ] Dead letter exchange: `rpk.dlq`
 
-### Queues & Bindings
-- [ ] `inventory.soft-booking-created` ← binding: `rpk.booking.events` / `soft-booking.created`
-- [ ] `inventory.soft-booking-released` ← binding: `rpk.booking.events` / `soft-booking.released`
-- [ ] `inventory.soft-booking-converted` ← binding: `rpk.booking.events` / `soft-booking.converted`
-- [ ] `inventory.vehicle-assigned` ← binding: `rpk.booking.events` / `vehicle.assigned`
-- [ ] `journey.vehicle-assigned` ← binding: `rpk.booking.events` / `vehicle.assigned`
-- [ ] `notification.payment-success` ← binding: `rpk.payment.events` / `payment.success`
-- [ ] `notification.booking-expired` ← binding: `rpk.booking.events` / `booking.expired`
-- [ ] `notification.vehicle-dispatched` ← binding: `rpk.journey.events` / `vehicle.dispatched`
-- [ ] Semua queue punya DLQ pasangan → `*.dlq`
+### Queue Bindings
+- [ ] `vehicle.soft-booking-created` ← `rpk.booking` / `booking.soft-booking.created`
+- [ ] `vehicle.soft-booking-released` ← `rpk.booking` / `booking.soft-booking.released`
+- [ ] `journey.assignment-created` ← `rpk.vehicle` / `vehicle.assignment.created`
+- [ ] `notification.payment-success` ← `rpk.payment` / `payment.success`
+- [ ] `notification.booking-expired` ← `rpk.booking` / `booking.order.expired`
+- [ ] Semua queue punya DLQ pasangan
 
 ---
 
@@ -355,67 +345,24 @@ git --version             # Git 2.x+
 - [ ] BookingOrder: `CreateBookingOrder` handler — validate stock hold logic
 - [ ] BookingOrder: `ExpireBookingOrders` scheduler — validate expiry logic
 - [ ] Vehicle: `GetAvailableStock` query — validate soft booking deduction
-- [ ] Payment: `ProcessPaymentWebhook` — validate state transitions
 
 ### 10.2 Integration Tests
-- [ ] End-to-end booking flow:
-  1. `POST /api/bookings` → booking created + soft booking ACTIVE
-  2. `POST /api/payments` → payment created (VA/QRIS)
-  3. Simulate gateway webhook → payment SUCCESS
-  4. Verify: booking_order.status=PAID, soft_booking.status=CONVERTED
-- [ ] Expiry flow:
-  1. Create booking, manipulate `payment_expires_at` ke masa lalu
-  2. Trigger scheduler job
-  3. Verify: status=EXPIRED, soft_booking.status=EXPIRED
+- [ ] End-to-end booking flow (POST booking → payment webhook → CONFIRMED)
+- [ ] Expiry flow (manipulate payment_expires_at → trigger scheduler → EXPIRED)
 
 ### 10.3 Postman Collection
-- [ ] Import collection ke Postman
-- [ ] Environment variables: `base_url`, `vehicle_api`, `booking_api`, `payment_api`
-- [ ] Test suite per service (Master, Vehicle, Booking, Payment, Journey)
-
-### 10.4 Checklist Final Verifikasi
-
-```bash
-# Docker
-docker compose ps                        # semua healthy
-
-# Databases
-docker exec -it rpk-postgres psql -U rpk_admin -c "\l"
-
-# Services health
-curl http://localhost:5010/health        # Vehicle API
-curl http://localhost:5020/health        # BookingOrder API
-curl http://localhost:5050/health        # Payment API
-curl http://localhost:3001               # Dashboard
-
-# RabbitMQ
-# Buka http://localhost:15672 → Exchanges tab → cek rpk.*.events
-# Buka Queues tab → cek semua queue ada
-
-# Seq
-# Buka http://localhost:8081 → cek ada log masuk dari services
-```
+- [ ] Collection per service (Master, Vehicle, Booking, Payment, Journey)
+- [ ] Environment: `base_url`, service-specific URLs
 
 ---
 
 ## PHASE 11 — IoT / NFC (Opsional)
 > Skip jika belum ada hardware. Semua service lain fully functional tanpa ini.
 
-- [ ] `infrastructure/mosquitto/mosquitto.conf` dibuat
-- [ ] Mosquitto container running (port 1883 + 9001)
 - [ ] `nest new iot-gateway` (port 3005)
-- [ ] Install: `mqtt @types/mqtt amqplib @types/amqplib`
 - [ ] MQTT subscriber: topic `rentpakhaji/gate/+/scan`
 - [ ] NFC scan handler → validate card → trigger journey pool event
-- [ ] Test tanpa hardware:
-  ```bash
-  # Terminal A - subscribe
-  mqtt subscribe -h localhost -t "rentpakhaji/gate/+/scan" -v
-  # Terminal B - simulate scan
-  mqtt publish -h localhost -t "rentpakhaji/gate/gate-001/scan" \
-    -m '{"cardUid":"AB:CD:EF:12","timestamp":"2026-05-09T10:00:00Z"}'
-  ```
-- [ ] (Hardware) ESP32 + MFRC522 sketch di-upload dan terhubung ke WiFi + MQTT
+- [ ] (Hardware) ESP32 + MFRC522 sketch
 
 ---
 
@@ -431,7 +378,7 @@ curl http://localhost:3001               # Dashboard
 | Jaeger | 16686 | Distributed tracing UI |
 | pgAdmin | 8080 | Database UI |
 | Mosquitto MQTT | 1883 | IoT messaging |
-| Master API (.NET) | 5000 | Pool, Customer, NFC, Voucher |
+| Master API (.NET) | 5000 | Pool, Customer, NFC |
 | Vehicle API (.NET) | 5010 | Inventory & stock management |
 | BookingOrder API (.NET) | 5020 | Booking, soft booking, assignment |
 | Journey API (.NET) | 5030 | Dispatch & return tracking |
@@ -439,7 +386,7 @@ curl http://localhost:3001               # Dashboard
 | Payment API (.NET) | 5050 | Invoice, payment, refund |
 | Saga API (.NET) | 5060 | Saga orchestrator |
 | API Gateway (NestJS) | 3000 | BFF / reverse proxy |
-| Dashboard (NestJS) | 3001 | Real-time WebSocket dashboard |
+| Dashboard (NestJS) | 3001 | Real-time WebSocket |
 | Voucher (NestJS) | 3002 | Voucher & special price |
 | Notification (NestJS) | 3004 | WA, Email, Push |
 | IoT Gateway (NestJS) | 3005 | NFC/MQTT bridge |
@@ -455,22 +402,18 @@ taskkill /PID <pid> /F
 
 # Container unhealthy — lihat log
 docker compose logs postgres --tail 30
-docker compose logs rabbitmq --tail 30
 
 # Reset semua data (hati-hati!)
-docker compose down -v
-docker compose up -d
-
-# NestJS module not found
-rmdir /s /q node_modules
-del package-lock.json
-npm install
+docker compose down -v && docker compose up -d
 
 # .NET EF migration error
 dotnet ef migrations remove
-dotnet ef migrations add InitialCreate --project <Entity> --startup-project <Api>
+dotnet ef migrations add InitialCreate
+
+# NestJS module not found
+rmdir /s /q node_modules && npm install
 ```
 
 ---
 
-*Progress: Phase 0–2 selesai ✅ · Phase 3–11 dalam antrian*
+*Progress: Phase 0–4 selesai ✅ · Phase 5–11 dalam antrian*

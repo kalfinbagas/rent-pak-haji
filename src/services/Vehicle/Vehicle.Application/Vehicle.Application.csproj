@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Vehicle.Application</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Vehicle.Domain\Vehicle.Domain.csproj" />
+    <ProjectReference Include="../../../../libs/common/RentPakHaji.Common.Application/RentPakHaji.Common.Application.csproj" />
+    <ProjectReference Include="../../../../libs/common/RentPakHaji.Common.Broker/RentPakHaji.Common.Broker.csproj" />
+    <ProjectReference Include="../../../../libs/common/RentPak

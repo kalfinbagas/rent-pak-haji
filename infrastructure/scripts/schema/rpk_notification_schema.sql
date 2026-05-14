@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS notification_log (
 
     -- Context booking (untuk tracing)
     booking_code            VARCHAR(20),    -- [denorm] booking terkait
-    transaction_id          VARCHAR(100),   -- [SERA: transactionId] saga correlation
+    transaction_id          VARCHAR(100),   -- saga/event correlation ID
 
     -- Status pengiriman
     status                  notification_status NOT NULL DEFAULT 'PENDING',

@@ -1,23 +1,24 @@
 -- ═══════════════════════════════════════════════════════════════════════════
 --  RENT PAK HAJI — rpk_vehicle Schema
---  Adapted from: SERA AstraFMS 2.0 ServiceVehicle
 --  Author  : Rizkalfin Bagas Aminullah
 --  Version : 2.0.0  |  May 2026
 --
---  SERA Patterns adapted:
---    ✓ VehicleCategory      → vehicle_category (lookup tabel terpisah)
---    ✓ VehicleTransmission  → vehicle_transmission_type
---    ✓ VehiclePreparation   → vehicle_preparation (pre-dispatch checklist)
---    ✓ TransferStock        → vehicle_transfer (antar pool)
---    ✓ TransferStockDetail  → vehicle_transfer_detail
---    ✓ TransferStockApproval→ vehicle_transfer_approval
---    ✓ VehicleAllocation    → vehicle_pool_allocation (quota per pool)
---    ✓ PoolInOutDashboard   → pool_in_out_dashboard (aggregasi dashboard)
---    ✓ VehicleStatus (full) → vehicle_status_log (full status history)
---    ✓ MovementLog          → vehicle_movement_log (low-level event log)
---    ✓ UnitStandby          → vehicle_standby (pre-assign untuk booking)
---    ✓ VehicleSoftBooking   → vehicle_soft_booking (replicated dari rpk_bookingorder)
---    ✓ VehicleAssignment    → vehicle_assignment (replicated dari rpk_bookingorder)
+--  Tables:
+--    ✓ vehicle_category          → lookup kategori kendaraan
+--    ✓ vehicle_transmission_type → lookup tipe transmisi
+--    ✓ master_vehicle            → data utama kendaraan
+--    ✓ vehicle_movement          → full audit trail perubahan status/lokasi
+--    ✓ vehicle_preparation       → pre-dispatch checklist
+--    ✓ vehicle_transfer          → transfer kendaraan antar pool
+--    ✓ vehicle_transfer_detail   → detail per unit dalam transfer
+--    ✓ vehicle_transfer_approval → multi-level approval transfer
+--    ✓ vehicle_pool_allocation   → kuota kendaraan per pool per periode
+--    ✓ pool_in_out_dashboard     → agregasi dashboard harian
+--    ✓ vehicle_standby           → pre-assign kendaraan untuk booking
+--    ✓ vehicle_standby_mapping   → mapping unit spesifik ke standby
+--    ✓ vehicle_soft_booking      → replikasi dari rpk_bookingorder (stock hold)
+--    ✓ vehicle_assignment        → replikasi dari rpk_bookingorder (dispatch info)
+--    ✓ outbox_message            → reliable event delivery
 -- ═══════════════════════════════════════════════════════════════════════════
 
 \c rpk_vehicle;
@@ -33,8 +34,17 @@ CREATE EXTENSION IF NOT EXISTS "pg_trgm"; -- for LIKE search optimization
 -- ─────────────────────────────────────────────────────────────
 DO $$ BEGIN
   CREATE TYPE vehicle_status_enum AS ENUM (
-    'AVAILABLE', 'RESERVED', 'READY', 'IN_USE',
-    'RETURNING_SOON', 'LATE_RETURN', 'MAINTENANCE', 'INACTIVE'
+    'AVAILABLE',        -- siap disewa
+    'RESERVED',         -- soft-booked (menunggu pembayaran)
+    'READY',            -- sudah diassign, menunggu dispatch
+    'IN_USE',           -- sedang dalam order aktif
+    'RETURNING_SOON',   -- mendekati waktu kembali
+    'LATE_RETURN',      -- melewati jadwal kembali
+    'MAINTENANCE',      -- servis / perawatan rutin
+    'BREAKDOWN',        -- mogok / kerusakan mendadak di lapangan
+    'THEFT',            -- dilaporkan hilang / dicuri
+    'BORROW',           -- dipinjam internal (bukan order customer)
+    'INACTIVE'          -- non-aktif / disposal
   );
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
@@ -53,12 +63,10 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ═══════════════════════════════════════════════════════════════
 -- BAGIAN 1: LOOKUP / REFERENCE TABLES
--- Diadaptasi dari SERA: VehicleCategory, VehicleTransmission
--- SERA pattern: setiap lookup punya: code, name, status, version, audit
+-- Setiap lookup punya: code, name, is_active, version, audit
 -- ═══════════════════════════════════════════════════════════════
 
--- [SERA: VehicleCategory] → vehicle_category
--- SERA menyimpan category sebagai FK terpisah, bukan VARCHAR di vehicle
+-- vehicle_category — disimpan sebagai FK lookup terpisah (bukan VARCHAR inline)
 CREATE TABLE IF NOT EXISTS vehicle_category (
     id              UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
     code            VARCHAR(20)     UNIQUE NOT NULL,  -- e.g. SUV, MPV, CITY_CAR, SPORT, MATIC, BEBEK
@@ -66,16 +74,15 @@ CREATE TABLE IF NOT EXISTS vehicle_category (
     vehicle_type    VARCHAR(20)     NOT NULL CHECK (vehicle_type IN ('CAR', 'MOTORCYCLE')),
     description     TEXT,
     is_active       BOOLEAN         NOT NULL DEFAULT TRUE,
-    -- SERA audit pattern
     version         INT             NOT NULL DEFAULT 1,
     created_by      UUID            NOT NULL,
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     modified_by     UUID,
     modified_at     TIMESTAMPTZ
 );
-COMMENT ON TABLE vehicle_category IS 'SERA adaptation: VehicleCategory — lookup kategori kendaraan (SUV, MPV, Matic, Bebek, dll)';
+COMMENT ON TABLE vehicle_category IS 'Lookup kategori kendaraan (SUV, MPV, City Car, Matic, Bebek, dll)';
 
--- [SERA: VehicleTransmission] → vehicle_transmission_type
+-- vehicle_transmission_type
 CREATE TABLE IF NOT EXISTS vehicle_transmission_type (
     id              UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
     code            VARCHAR(20)     UNIQUE NOT NULL, -- MANUAL, AUTOMATIC, CVT, DCT
@@ -87,12 +94,11 @@ CREATE TABLE IF NOT EXISTS vehicle_transmission_type (
     modified_by     UUID,
     modified_at     TIMESTAMPTZ
 );
-COMMENT ON TABLE vehicle_transmission_type IS 'SERA adaptation: VehicleTransmission — tipe transmisi kendaraan';
+COMMENT ON TABLE vehicle_transmission_type IS 'Lookup tipe transmisi kendaraan (Manual, Automatic, CVT, DCT, AMT)';
 
 -- ═══════════════════════════════════════════════════════════════
--- BAGIAN 2: MASTER VEHICLE (ENHANCED)
--- Tabel utama kendaraan, diperkaya dengan FK ke lookup tables
--- dari SERA pattern (category, transmission)
+-- BAGIAN 2: MASTER VEHICLE
+-- Tabel utama kendaraan — FK ke lookup tables category & transmission
 -- ═══════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS master_vehicle (
@@ -101,65 +107,65 @@ CREATE TABLE IF NOT EXISTS master_vehicle (
 
     -- Identifikasi kendaraan
     license_plate               VARCHAR(15)     UNIQUE NOT NULL,
-    vin                         VARCHAR(20)     UNIQUE,                     -- [SERA] Vehicle Identification Number
+    vin                         VARCHAR(20)     UNIQUE,                     -- Vehicle Identification Number
     vehicle_type                VARCHAR(20)     NOT NULL CHECK (vehicle_type IN ('CAR', 'MOTORCYCLE')),
     brand                       VARCHAR(50)     NOT NULL,
     model                       VARCHAR(50)     NOT NULL,
     year                        INT             NOT NULL,
     color                       VARCHAR(30),
 
-    -- [SERA FK lookups] — diadaptasi dari SERA: vehicleCategoryId, vehicleTransmissionId
+    -- FK ke lookup tables
     vehicle_category_id         UUID            REFERENCES vehicle_category(id),
     transmission_type_id        UUID            REFERENCES vehicle_transmission_type(id),
     number_of_seats             INT,                                         -- jumlah kursi
-    number_of_doors             INT,                                         -- [SERA: VehicleNumberOfDoors]
+    number_of_doors             INT,
     fuel_type                   VARCHAR(20)     DEFAULT 'GASOLINE'
-                                CHECK (fuel_type IN ('GASOLINE','DIESEL','ELECTRIC','HYBRID')),  -- [SERA: FuelType]
+                                CHECK (fuel_type IN ('GASOLINE','DIESEL','ELECTRIC','HYBRID')),
     wheel_drive                 VARCHAR(10)     DEFAULT '2WD'
-                                CHECK (wheel_drive IN ('2WD','4WD','AWD')),  -- [SERA: VehicleWheelDrive]
+                                CHECK (wheel_drive IN ('2WD','4WD','AWD')),
 
     -- Status & lokasi
     status                      vehicle_status_enum NOT NULL DEFAULT 'AVAILABLE',
-    pool_location_id            UUID            NOT NULL,                    -- FK ke rpk_master.pool_location (cross-service ref)
-    pool_location_name          VARCHAR(150)    NOT NULL,                    -- [SERA denorm pattern]
+    pool_location_id            UUID            NOT NULL,                    -- cross-service ref ke rpk_master.pool_location
+    pool_location_name          VARCHAR(150)    NOT NULL,                    -- [denorm]
 
     -- Pricing
     daily_rate                  DECIMAL(18,2)   NOT NULL,
 
     -- Odometer & kondisi
     odometer                    INT             NOT NULL DEFAULT 0,
-    has_obd                     BOOLEAN         NOT NULL DEFAULT FALSE,      -- [SERA: hasOBD] — apakah punya perangkat OBD
+    has_obd                     BOOLEAN         NOT NULL DEFAULT FALSE,      -- apakah punya perangkat OBD
 
-    -- [SERA: vehiclePreparationStatus] — status persiapan sebelum dispatch
+    -- status persiapan sebelum dispatch
     preparation_status          preparation_status_enum DEFAULT NULL,
     preparation_activity        VARCHAR(100),                                -- aktivitas prep saat ini
     preparation_activity_status VARCHAR(20),                                 -- status aktivitas (IN_PROGRESS/DONE)
     preparation_pic             UUID,                                        -- PIC yang bertanggung jawab prep
 
-    -- [SERA: unitCondition flags] — kondisi kendaraan
+    -- kondisi kendaraan
     condition_in_maintenance    BOOLEAN         NOT NULL DEFAULT FALSE,
     condition_has_breakdown     BOOLEAN         NOT NULL DEFAULT FALSE,
     condition_has_outstanding   BOOLEAN         NOT NULL DEFAULT FALSE,
 
-    -- Pool scheduling (from SERA: poolInTargetTime / poolInActualTime)
+    -- Pool scheduling
     pool_in_target_time         TIMESTAMPTZ,    -- kapan target kendaraan masuk pool
     pool_in_actual_time         TIMESTAMPTZ,    -- kapan aktual kendaraan masuk pool
 
     -- Ownership & kontrak
     ownership_type              VARCHAR(20)     NOT NULL DEFAULT 'OWN'
-                                CHECK (ownership_type IN ('OWN','LEASE','PARTNER')),   -- [SERA: ownership]
-    valid_from                  DATE,                                        -- [SERA: validFrom]
-    valid_to                    DATE,                                        -- [SERA: validTo]
-    acquisition_date            DATE,                                        -- [SERA: acquisitionDate]
-    acquisition_value           DECIMAL(18,2),                              -- [SERA: acquisitionValue]
+                                CHECK (ownership_type IN ('OWN','LEASE','PARTNER')),
+    valid_from                  DATE,
+    valid_to                    DATE,
+    acquisition_date            DATE,
+    acquisition_value           DECIMAL(18,2),
 
-    -- SAP/External integration (SERA pattern — bisa dipakai untuk ERP link di masa depan)
-    external_ref                VARCHAR(100),                                -- [SERA: ioNumber / referenceNumber]
-    transaction_id              VARCHAR(100),                                -- [SERA: transactionId] saga correlation
+    -- Referensi sistem eksternal (ERP/SAP)
+    external_ref                VARCHAR(100),
+    transaction_id              VARCHAR(100),                                -- saga/event correlation ID
 
     -- Soft delete & audit
     is_active                   BOOLEAN         NOT NULL DEFAULT TRUE,
-    version                     INT             NOT NULL DEFAULT 1,          -- [SERA: version] optimistic concurrency
+    version                     INT             NOT NULL DEFAULT 1,          -- optimistic concurrency token
     created_by                  UUID            NOT NULL,
     created_at                  TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     modified_by                 UUID,
@@ -171,11 +177,10 @@ CREATE INDEX IF NOT EXISTS idx_mv_pool ON master_vehicle(pool_location_id);
 CREATE INDEX IF NOT EXISTS idx_mv_type ON master_vehicle(vehicle_type);
 CREATE INDEX IF NOT EXISTS idx_mv_category ON master_vehicle(vehicle_category_id);
 CREATE INDEX IF NOT EXISTS idx_mv_plate ON master_vehicle(license_plate);
-COMMENT ON TABLE master_vehicle IS 'Tabel utama kendaraan — diperkaya dengan FK lookup tables dan field dari SERA AstraFMS pattern';
+COMMENT ON TABLE master_vehicle IS 'Tabel utama kendaraan — FK ke lookup category & transmission, audit trail, soft-delete, optimistic concurrency';
 
 -- ═══════════════════════════════════════════════════════════════
 -- BAGIAN 3: VEHICLE MOVEMENT (FULL AUDIT TRAIL)
--- Existing + enhanced dengan field SERA MovementLog
 -- ═══════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS vehicle_movement (
@@ -184,21 +189,21 @@ CREATE TABLE IF NOT EXISTS vehicle_movement (
     previous_status     vehicle_status_enum,
     new_status          vehicle_status_enum NOT NULL,
     from_pool_id        UUID,
-    from_pool_name      VARCHAR(150),                   -- [SERA denorm]
+    from_pool_name      VARCHAR(150),                   -- [denorm]
     to_pool_id          UUID,
-    to_pool_name        VARCHAR(150),                   -- [SERA denorm]
+    to_pool_name        VARCHAR(150),                   -- [denorm]
     booking_id          UUID,                           -- reference ke rpk_bookingorder
-    booking_code        VARCHAR(20),                    -- [SERA denorm] untuk tracing tanpa join
+    booking_code        VARCHAR(20),                    -- [denorm] untuk tracing tanpa join
     changed_by          UUID            NOT NULL,
     changed_by_type     VARCHAR(20)     NOT NULL        -- SYSTEM, OPERATOR, CUSTOMER, SCHEDULER
                         CHECK (changed_by_type IN ('SYSTEM','OPERATOR','CUSTOMER','SCHEDULER')),
-    -- [SERA: VehicleMovementType] — tipe movement
+    -- tipe movement
     movement_type       VARCHAR(30)     NOT NULL DEFAULT 'STATUS_CHANGE'
                         CHECK (movement_type IN (
                           'STATUS_CHANGE','DISPATCH','RETURN','TRANSFER',
                           'MAINTENANCE_IN','MAINTENANCE_OUT','ALLOCATION'
                         )),
-    -- [SERA: VehicleMovementSource] — sumber trigger
+    -- sumber trigger movement
     movement_source     VARCHAR(30)     NOT NULL DEFAULT 'MANUAL'
                         CHECK (movement_source IN (
                           'MANUAL','BOOKING_ORDER','NFC_GATE',
@@ -207,7 +212,7 @@ CREATE TABLE IF NOT EXISTS vehicle_movement (
     reason              VARCHAR(200)    NOT NULL,
     odometer_at         INT,                            -- odometer saat movement
     notes               TEXT,
-    -- [SERA: transactionId] saga/event correlation
+    -- saga/event correlation ID
     transaction_id      VARCHAR(100),
     created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
@@ -216,28 +221,27 @@ CREATE INDEX IF NOT EXISTS idx_vm_vehicle ON vehicle_movement(vehicle_id);
 CREATE INDEX IF NOT EXISTS idx_vm_booking ON vehicle_movement(booking_id);
 CREATE INDEX IF NOT EXISTS idx_vm_created ON vehicle_movement(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_vm_type ON vehicle_movement(movement_type);
-COMMENT ON TABLE vehicle_movement IS 'Full audit trail setiap perubahan status/lokasi kendaraan — extended dari SERA VehicleMovement + MovementLog pattern';
+COMMENT ON TABLE vehicle_movement IS 'Full audit trail setiap perubahan status/lokasi kendaraan — tipe movement, sumber trigger, dan saga correlation';
 
 -- ═══════════════════════════════════════════════════════════════
 -- BAGIAN 4: VEHICLE PREPARATION
--- [SERA adaptation: VehiclePreparation]
 -- Pre-dispatch checklist sebelum kendaraan diberikan ke customer
--- SERA tracking: wash, inspection, NFC assignment, documentation
+-- Tracking: cuci, inspeksi, pengisian BBM, NFC assignment, dokumentasi
 -- ═══════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS vehicle_preparation (
     id                      UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     vehicle_id              UUID        NOT NULL REFERENCES master_vehicle(id),
     booking_id              UUID        NOT NULL,       -- reference ke rpk_bookingorder
-    booking_code            VARCHAR(20) NOT NULL,       -- [SERA denorm]
+    booking_code            VARCHAR(20) NOT NULL,       -- [denorm]
     dispatch_id             UUID,                       -- reference ke rpk_journey.dispatch
     pic_id                  UUID        NOT NULL,       -- operator yang bertanggung jawab
-    pic_name                VARCHAR(150) NOT NULL,      -- [SERA denorm] preparationPIC
+    pic_name                VARCHAR(150) NOT NULL,      -- [denorm] preparation PIC
 
     -- Status persiapan keseluruhan
     overall_status          preparation_status_enum NOT NULL DEFAULT 'PENDING',
 
-    -- Checklist aktivitas ([SERA: vehiclePreparationActivity])
+    -- Checklist aktivitas
     is_washed               BOOLEAN     NOT NULL DEFAULT FALSE,
     wash_completed_at       TIMESTAMPTZ,
     is_inspected            BOOLEAN     NOT NULL DEFAULT FALSE,
@@ -255,7 +259,7 @@ CREATE TABLE IF NOT EXISTS vehicle_preparation (
     actual_ready_at         TIMESTAMPTZ,               -- kapan benar-benar siap
 
     notes                   TEXT,
-    transaction_id          VARCHAR(100),               -- [SERA: transactionId]
+    transaction_id          VARCHAR(100),               -- saga/event correlation ID
 
     -- Audit
     created_by              UUID        NOT NULL,
@@ -267,13 +271,12 @@ CREATE TABLE IF NOT EXISTS vehicle_preparation (
 CREATE INDEX IF NOT EXISTS idx_vp_vehicle ON vehicle_preparation(vehicle_id);
 CREATE INDEX IF NOT EXISTS idx_vp_booking ON vehicle_preparation(booking_id);
 CREATE INDEX IF NOT EXISTS idx_vp_status ON vehicle_preparation(overall_status);
-COMMENT ON TABLE vehicle_preparation IS 'SERA adaptation: VehiclePreparation — checklist persiapan kendaraan sebelum dispatch (cuci, inspeksi, bahan bakar, NFC)';
+COMMENT ON TABLE vehicle_preparation IS 'Pre-dispatch checklist kendaraan — cuci, inspeksi, pengisian BBM, NFC assignment, dan verifikasi dokumen';
 
 -- ═══════════════════════════════════════════════════════════════
 -- BAGIAN 5: VEHICLE TRANSFER (ANTAR POOL)
--- [SERA adaptation: TransferStock + TransferStockDetail + TransferStockApproval]
 -- Untuk operasi multi-pool: meminjam/memindah kendaraan antar lokasi
--- SERA: borrower/loaner BU pattern
+-- Mendukung tipe: PERMANENT, TEMPORARY, LOAN (antar BU/pool)
 -- ═══════════════════════════════════════════════════════════════
 
 -- Header request transfer kendaraan antar pool
@@ -283,11 +286,11 @@ CREATE TABLE IF NOT EXISTS vehicle_transfer (
     transfer_type           VARCHAR(20)     NOT NULL            -- PERMANENT / TEMPORARY / LOAN
                             CHECK (transfer_type IN ('PERMANENT','TEMPORARY','LOAN')),
 
-    -- [SERA: borrower/loaner pattern] — Pool yang meminjam vs meminjamkan
+    -- Pool yang meminjam vs yang menyediakan
     requester_pool_id       UUID            NOT NULL,           -- pool yang request
-    requester_pool_name     VARCHAR(150)    NOT NULL,           -- [SERA denorm]
+    requester_pool_name     VARCHAR(150)    NOT NULL,           -- [denorm]
     provider_pool_id        UUID            NOT NULL,           -- pool yang menyediakan
-    provider_pool_name      VARCHAR(150)    NOT NULL,           -- [SERA denorm]
+    provider_pool_name      VARCHAR(150)    NOT NULL,           -- [denorm]
 
     -- Referensi booking (jika transfer karena kebutuhan booking)
     booking_order_id        UUID,
@@ -303,10 +306,10 @@ CREATE TABLE IF NOT EXISTS vehicle_transfer (
     actual_transfer_date    DATE,                               -- tanggal aktual transfer
 
     notes                   TEXT,
-    transaction_id          VARCHAR(100)    NOT NULL,           -- [SERA: transactionId] saga ID
+    transaction_id          VARCHAR(100)    NOT NULL,           -- saga/event correlation ID
 
     -- Audit
-    status                  SMALLINT        NOT NULL DEFAULT 1, -- [SERA: soft-delete pattern]
+    status                  SMALLINT        NOT NULL DEFAULT 1, -- soft-delete: 1=active, 0=deleted
     created_by              UUID            NOT NULL,
     created_at              TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     modified_by             UUID,
@@ -316,22 +319,21 @@ CREATE TABLE IF NOT EXISTS vehicle_transfer (
 CREATE INDEX IF NOT EXISTS idx_vt_status ON vehicle_transfer(request_status);
 CREATE INDEX IF NOT EXISTS idx_vt_requester ON vehicle_transfer(requester_pool_id);
 CREATE INDEX IF NOT EXISTS idx_vt_provider ON vehicle_transfer(provider_pool_id);
-COMMENT ON TABLE vehicle_transfer IS 'SERA adaptation: TransferStock — request pemindahan/peminjaman kendaraan antar pool';
+COMMENT ON TABLE vehicle_transfer IS 'Request pemindahan/peminjaman kendaraan antar pool — dengan multi-level approval workflow';
 
 -- Detail per kendaraan dalam satu transfer request
--- [SERA: TransferStockDetail]
 CREATE TABLE IF NOT EXISTS vehicle_transfer_detail (
     id                  UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
     vehicle_transfer_id UUID            NOT NULL REFERENCES vehicle_transfer(id) ON DELETE CASCADE,
     vehicle_id          UUID            REFERENCES master_vehicle(id),   -- null = belum assign unit spesifik
-    license_plate       VARCHAR(15),                                      -- [SERA denorm]
+    license_plate       VARCHAR(15),                                      -- [denorm]
     vehicle_type        VARCHAR(20)     NOT NULL,
     vehicle_category    VARCHAR(30),
     brand               VARCHAR(50),
     model               VARCHAR(50),
     year                INT,
-    transmission        VARCHAR(20),                                      -- [SERA: transmission]
-    is_revoked          BOOLEAN         NOT NULL DEFAULT FALSE,           -- [SERA: isRevoked]
+    transmission        VARCHAR(20),
+    is_revoked          BOOLEAN         NOT NULL DEFAULT FALSE,           -- unit dibatalkan dari transfer ini
     notes               TEXT,
     transaction_id      VARCHAR(100),
     status              SMALLINT        NOT NULL DEFAULT 1,
@@ -342,22 +344,21 @@ CREATE TABLE IF NOT EXISTS vehicle_transfer_detail (
 );
 
 CREATE INDEX IF NOT EXISTS idx_vtd_transfer ON vehicle_transfer_detail(vehicle_transfer_id);
-COMMENT ON TABLE vehicle_transfer_detail IS 'SERA adaptation: TransferStockDetail — detail per unit kendaraan dalam transfer request';
+COMMENT ON TABLE vehicle_transfer_detail IS 'Detail per unit kendaraan dalam satu transfer request';
 
--- Approval workflow untuk transfer kendaraan
--- [SERA: TransferStockApproval] — multi-level approval
+-- Approval workflow untuk transfer kendaraan — multi-level
 CREATE TABLE IF NOT EXISTS vehicle_transfer_approval (
     id                  UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
     vehicle_transfer_id UUID            NOT NULL REFERENCES vehicle_transfer(id) ON DELETE CASCADE,
-    approval_level      INT             NOT NULL,                -- level 1 = pool manager, level 2 = area manager
-    role_name           VARCHAR(100)    NOT NULL,                -- [SERA denorm]
+    approval_level      INT             NOT NULL,                -- 1=pool manager, 2=area manager
+    role_name           VARCHAR(100)    NOT NULL,                -- [denorm]
     approver_id         UUID,
-    approver_name       VARCHAR(150),                            -- [SERA denorm: approverName]
+    approver_name       VARCHAR(150),                            -- [denorm]
     approval_status     VARCHAR(20)     NOT NULL DEFAULT 'PENDING'
                         CHECK (approval_status IN ('PENDING','APPROVED','REJECTED')),
-    is_current_approval BOOLEAN         NOT NULL DEFAULT FALSE,  -- [SERA: isCurrentApproval]
+    is_current_approval BOOLEAN         NOT NULL DEFAULT FALSE,  -- apakah ini giliran approval aktif
     approval_date       TIMESTAMPTZ,
-    rejection_reason    TEXT,                                    -- [SERA: rejectionReason]
+    rejection_reason    TEXT,
     transaction_id      VARCHAR(100),
     status              SMALLINT        NOT NULL DEFAULT 1,
     created_by          UUID            NOT NULL,
@@ -367,39 +368,38 @@ CREATE TABLE IF NOT EXISTS vehicle_transfer_approval (
 );
 
 CREATE INDEX IF NOT EXISTS idx_vta_transfer ON vehicle_transfer_approval(vehicle_transfer_id);
-COMMENT ON TABLE vehicle_transfer_approval IS 'SERA adaptation: TransferStockApproval — multi-level approval workflow untuk transfer antar pool';
+COMMENT ON TABLE vehicle_transfer_approval IS 'Multi-level approval workflow untuk transfer kendaraan antar pool';
 
 -- ═══════════════════════════════════════════════════════════════
 -- BAGIAN 6: VEHICLE POOL ALLOCATION
--- [SERA adaptation: VehicleAllocation]
--- Manajemen kuota kendaraan per pool dalam periode tertentu
--- Berguna untuk operasi Haji/Umrah: berapa unit dialokasikan ke pool A vs B
+-- Manajemen kuota kendaraan per pool dalam periode tertentu.
+-- Berguna untuk operasi Haji/Umrah: berapa unit dialokasikan ke pool A vs B.
 -- ═══════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS vehicle_pool_allocation (
     id                      UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
-    period_start            DATE            NOT NULL,            -- [SERA: periodStart]
-    period_end              DATE            NOT NULL,            -- [SERA: periodEnd]
+    period_start            DATE            NOT NULL,
+    period_end              DATE            NOT NULL,
 
     allocation_type         VARCHAR(20)     NOT NULL DEFAULT 'FIXED'
-                            CHECK (allocation_type IN ('FIXED','DAILY','EVENT')), -- [SERA: allocationType]
+                            CHECK (allocation_type IN ('FIXED','DAILY','EVENT')),
 
     -- Pool asal & tujuan alokasi
-    source_pool_id          UUID            NOT NULL,            -- [SERA: locationPlacementId]
+    source_pool_id          UUID            NOT NULL,
     source_pool_name        VARCHAR(150)    NOT NULL,
-    target_pool_id          UUID            NOT NULL,            -- [SERA: locationTargetId]
+    target_pool_id          UUID            NOT NULL,
     target_pool_name        VARCHAR(150)    NOT NULL,
 
     vehicle_type            VARCHAR(20),                         -- null = semua tipe
-    vehicle_category        VARCHAR(30),                         -- optional filter kategori
+    vehicle_category        VARCHAR(30),                         -- filter kategori opsional
 
-    total_unit              INT             NOT NULL,            -- [SERA: totalUnit] kuota unit
-    daily_out               INT,                                 -- [SERA: dailyOutletOut]
-    daily_in                INT,                                 -- [SERA: dailyOutletIn]
+    total_unit              INT             NOT NULL,            -- kuota unit yang dialokasikan
+    daily_out               INT,                                 -- estimasi unit keluar per hari
+    daily_in                INT,                                 -- estimasi unit masuk per hari
 
-    is_same_location        BOOLEAN         NOT NULL DEFAULT FALSE,  -- [SERA: isSameLocation]
-    vehicle_stock_flag      BOOLEAN,                             -- [SERA: vehicleStockFlag]
-    is_approved             BOOLEAN         NOT NULL DEFAULT FALSE,  -- [SERA: isApprove]
+    is_same_location        BOOLEAN         NOT NULL DEFAULT FALSE,
+    vehicle_stock_flag      BOOLEAN,                             -- apakah pool ini menjadi sumber stok
+    is_approved             BOOLEAN         NOT NULL DEFAULT FALSE,
     allocation_status       VARCHAR(20)     NOT NULL DEFAULT 'DRAFT'
                             CHECK (allocation_status IN ('DRAFT','PENDING','APPROVED','ACTIVE','EXPIRED','CANCELLED')),
 
@@ -418,12 +418,11 @@ CREATE INDEX IF NOT EXISTS idx_vpa_period ON vehicle_pool_allocation(period_star
 CREATE INDEX IF NOT EXISTS idx_vpa_source ON vehicle_pool_allocation(source_pool_id);
 CREATE INDEX IF NOT EXISTS idx_vpa_target ON vehicle_pool_allocation(target_pool_id);
 CREATE INDEX IF NOT EXISTS idx_vpa_status ON vehicle_pool_allocation(allocation_status);
-COMMENT ON TABLE vehicle_pool_allocation IS 'SERA adaptation: VehicleAllocation — manajemen kuota unit kendaraan per pool dalam periode tertentu (berguna untuk event Haji/Umrah)';
+COMMENT ON TABLE vehicle_pool_allocation IS 'Manajemen kuota unit kendaraan per pool dalam periode tertentu — berguna untuk event Haji/Umrah';
 
 -- ═══════════════════════════════════════════════════════════════
 -- BAGIAN 7: POOL IN/OUT DASHBOARD
--- [SERA adaptation: PoolInOutDashboard]
--- Agregasi harian untuk dashboard operasional
+-- Agregasi snapshot harian untuk dashboard operasional
 -- ═══════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS pool_in_out_dashboard (
@@ -460,13 +459,12 @@ CREATE TABLE IF NOT EXISTS pool_in_out_dashboard (
 
 CREATE INDEX IF NOT EXISTS idx_piod_pool ON pool_in_out_dashboard(pool_location_id);
 CREATE INDEX IF NOT EXISTS idx_piod_date ON pool_in_out_dashboard(snapshot_date DESC);
-COMMENT ON TABLE pool_in_out_dashboard IS 'SERA adaptation: PoolInOutDashboard — snapshot agregasi harian stok & pergerakan kendaraan per pool';
+COMMENT ON TABLE pool_in_out_dashboard IS 'Snapshot agregasi harian stok & pergerakan kendaraan per pool — untuk dashboard operasional';
 
 -- ═══════════════════════════════════════════════════════════════
 -- BAGIAN 8: VEHICLE STANDBY
--- [SERA adaptation: UnitStandby + UnitStandbyMapping]
--- Kendaraan yang di-pre-assign untuk booking yang akan datang
--- Berguna untuk operasi Haji: unit sudah "dipegang" sebelum booking confirmed
+-- Kendaraan yang di-pre-assign untuk booking yang akan datang.
+-- Berguna untuk operasi Haji: unit "dipegang" sebelum booking confirmed.
 -- ═══════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS vehicle_standby (
@@ -485,22 +483,22 @@ CREATE TABLE IF NOT EXISTS vehicle_standby (
     modified_at         TIMESTAMPTZ
 );
 
--- Mapping unit spesifik ke standby order ([SERA: UnitStandbyMapping])
+-- Mapping unit spesifik ke standby order
 CREATE TABLE IF NOT EXISTS vehicle_standby_mapping (
     id                  UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     vehicle_standby_id  UUID        NOT NULL REFERENCES vehicle_standby(id) ON DELETE CASCADE,
     vehicle_id          UUID        NOT NULL REFERENCES master_vehicle(id),
-    license_plate       VARCHAR(15) NOT NULL,   -- [SERA denorm]
-    vehicle_type        VARCHAR(20) NOT NULL,   -- [SERA denorm] snapshot tipe kendaraan
-    brand               VARCHAR(50),            -- [SERA denorm] snapshot merek
-    model               VARCHAR(50),            -- [SERA denorm] snapshot model
+    license_plate       VARCHAR(15) NOT NULL,   -- [denorm]
+    vehicle_type        VARCHAR(20) NOT NULL,   -- [denorm] snapshot tipe kendaraan
+    brand               VARCHAR(50),            -- [denorm] snapshot merek
+    model               VARCHAR(50),            -- [denorm] snapshot model
     assigned_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     assigned_by         UUID        NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_vsm_standby ON vehicle_standby_mapping(vehicle_standby_id);
 CREATE INDEX IF NOT EXISTS idx_vsm_vehicle ON vehicle_standby_mapping(vehicle_id);
-COMMENT ON TABLE vehicle_standby IS 'SERA adaptation: UnitStandby — pre-assignment kendaraan untuk kebutuhan yang akan datang';
+COMMENT ON TABLE vehicle_standby IS 'Pre-assignment kendaraan untuk kebutuhan operasional yang akan datang (Haji, event khusus, dll)';
 
 -- ═══════════════════════════════════════════════════════════════
 -- BAGIAN 9: VEHICLE_SOFT_BOOKING — REPLICATED
@@ -521,7 +519,7 @@ CREATE TABLE IF NOT EXISTS vehicle_soft_booking (
     -- Filter stok oleh Inventory Service
     vehicle_type        VARCHAR(20) NOT NULL,
     pool_location_id    UUID        NOT NULL,    -- reference ke rpk_master.pool_location (cross-service, no FK)
-    pool_location_name  VARCHAR(150) NOT NULL,   -- [SERA denorm] snapshot nama pool — tanpa join ke master
+    pool_location_name  VARCHAR(150) NOT NULL,   -- [denorm] snapshot nama pool — tanpa join ke master
 
     -- Window untuk cek overlap saat reserve stok
     start_rental_at     TIMESTAMPTZ NOT NULL,
@@ -590,7 +588,7 @@ CREATE TABLE IF NOT EXISTS vehicle_assignment (
     status              VARCHAR(20) NOT NULL DEFAULT 'PENDING'
                         CHECK (status IN ('PENDING','DISPATCHED','ACTIVE','RETURNED','CANCELLED')),
 
-    -- [SERA: AssignmentStatus terpisah] — 0=ASSIGNED, 1=RELEASED, 2=REJECTED
+    -- status assignment numerik: 0=ASSIGNED, 1=RELEASED, 2=REJECTED
     assignment_status   SMALLINT    NOT NULL DEFAULT 0,
 
     -- Metadata replikasi

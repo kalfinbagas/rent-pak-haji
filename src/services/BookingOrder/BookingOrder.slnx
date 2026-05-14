@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="BookingOrder.Domain\BookingOrder.Domain.csproj" />
+  <Project Path="BookingOrder.Application\BookingOrder.Application.csproj" />
+  <Project Path="BookingOrder.Infrastructure\BookingOrder.Infrastructure.csproj" />
+  <Project Path="BookingOrder.Api\BookingOrder.Api.csproj" />
+  <Project P

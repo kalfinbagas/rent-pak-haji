@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS invoice (
     notes               TEXT,
 
     -- Saga correlation
-    transaction_id      VARCHAR(100)    NOT NULL,   -- [SERA: transactionId]
+    transaction_id      VARCHAR(100)    NOT NULL,   -- saga/event correlation ID
 
     -- Audit
     created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
@@ -195,7 +195,7 @@ CREATE TABLE IF NOT EXISTS payment (
     notes               TEXT,
 
     -- Saga correlation
-    transaction_id      VARCHAR(100)    NOT NULL,   -- [SERA: transactionId]
+    transaction_id      VARCHAR(100)    NOT NULL,   -- saga/event correlation ID
 
     -- Audit
     created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),

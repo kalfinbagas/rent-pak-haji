@@ -1,10 +1,10 @@
 -- ═══════════════════════════════════════════════════════════════════════════
 --  RENT PAK HAJI — Database Initialization
---  Arsitektur: 1 Service = 1 Database (SERA pattern)
+--  Arsitektur: 1 Service = 1 Database
 --  Author  : Rizkalfin Bagas Aminullah
 --  Version : 2.0.0  |  May 2026
 --
---  SERA Adaptations (v2.0):
+--  v2.0 Enhancements:
 --    * rpk_master    → Enhanced dengan PoolLocationHierarchy, ApprovalMatrix
 --    * rpk_vehicle   → Enhanced dengan VehicleCategory, Preparation, Transfer, Allocation
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -40,8 +40,8 @@ GRANT ALL PRIVILEGES ON DATABASE rpk_driver TO rpk_admin;
 -- ─────────────────────────────────────────────────────────────
 -- 4. rpk_bookingorder → BookingOrder Service (.NET)
 --    Tables: BookingOrder, BookingOrderDetail,
---            VehicleSoftBooking (+ SERA: Sequence, NumberOfVehicles, TransactionId),
---            VehicleAssignment  (+ SERA: Sequence, AssignmentStatus, ReasonType),
+--            VehicleSoftBooking (+ Sequence, NumberOfVehicles, TransactionId),
+--            VehicleAssignment  (+ Sequence, AssignmentStatus, ReasonType),
 --            Views: v_booking_summary, v_expiring_soft_bookings, v_pending_dispatch,
 --            OutboxMessage
 -- ─────────────────────────────────────────────────────────────

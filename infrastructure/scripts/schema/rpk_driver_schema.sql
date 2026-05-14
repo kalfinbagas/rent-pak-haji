@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS driver (
     rating              DECIMAL(3,2),                       -- rata-rata rating dari customer (1.00–5.00)
     rating_count        INT             NOT NULL DEFAULT 0, -- jumlah rating yang masuk
 
-    -- [SERA: isBlocked pattern] — sopir yang bermasalah
+    -- sopir yang bermasalah — diblokir dari penugasan
     is_blocked          BOOLEAN         NOT NULL DEFAULT FALSE,
     blocked_reason      TEXT,
 
@@ -91,13 +91,13 @@ CREATE TABLE IF NOT EXISTS driver (
 
     -- Soft delete & audit (pola vehicle)
     is_active           BOOLEAN         NOT NULL DEFAULT TRUE,
-    version             INT             NOT NULL DEFAULT 1,     -- [SERA: optimistic concurrency]
-    unique_key          VARCHAR(100),                           -- [SERA: uniqueKey idempotency]
+    version             INT             NOT NULL DEFAULT 1,     -- optimistic concurrency token
+    unique_key          VARCHAR(100),                           -- idempotency key
     created_by          UUID            NOT NULL,
     created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     modified_by         UUID,
     modified_at         TIMESTAMPTZ,
-    transaction_id      VARCHAR(100)                            -- [SERA: transactionId]
+    transaction_id      VARCHAR(100)                            -- saga/event correlation ID
 );
 
 CREATE INDEX IF NOT EXISTS idx_drv_status   ON driver(status);

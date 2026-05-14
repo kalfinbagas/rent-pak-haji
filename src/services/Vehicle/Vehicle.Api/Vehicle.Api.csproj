@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Vehicle.Api</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Vehicle.Infrastructure\Vehicle.Infrastructure.csproj" />
+    <ProjectReference Include="../../../../libs/common/RentPakHaji.Common.Application/RentPakHaji.Common.Application.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="MediatR" Version="12.*" />
+    <PackageReference Include="MediatR.Extensions.Microsoft.DependencyInjection" Version="12.*" />
+    <PackageReference Include="Fluen

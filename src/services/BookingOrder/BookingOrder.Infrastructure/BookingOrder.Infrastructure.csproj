@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>BookingOrder.Infrastructure</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BookingOrder.Application\BookingOrder.Application.csproj" />
+    <ProjectReference Include="..\..\..\..\libs\common\RentPakHaji.Common.Infrastructure\RentPakHaji.Common.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\..\libs\common\RentPakHaji.Common.Broker\RentPakHaji.Common.Broker.csproj" />
+    <ProjectReference Include="..\..\..\..\libs\common\RentPakHaji.Common.Contracts\RentPakHaji.Common.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.*">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.*" />
+  </ItemGroup>
+
+</Project>

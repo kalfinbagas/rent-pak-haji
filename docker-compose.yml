@@ -3,7 +3,7 @@
 #  Author : Rizkalfin Bagas Aminullah
 #  Version: 2.0.0  |  May 2026
 #
-#  v2.0 Changes (SERA AstraFMS adaptation):
+#  v2.0 Changes:
 #    + Mount schema files untuk rpk_vehicle & rpk_master
 #    + Tambah rpk_corporate database (CustomerContract B2B)
 #    + PostgreSQL init-scripts folder untuk sequential execution
@@ -29,7 +29,7 @@ services:
       # init-db.sql dijalankan PERTAMA — buat semua database
       - ./infrastructure/scripts/init-db.sql:/docker-entrypoint-initdb.d/01_init.sql
       # Schema files dijalankan SETELAH init — buat semua tabel per DB
-      # SERA adaptation: rpk_vehicle & rpk_master diperluas dengan tabel baru
+      # rpk_vehicle & rpk_master diperluas dengan tabel baru
       - ./infrastructure/scripts/schema/rpk_master_schema.sql:/docker-entrypoint-initdb.d/02_master_schema.sql
       - ./infrastructure/scripts/schema/rpk_vehicle_schema.sql:/docker-entrypoint-initdb.d/03_vehicle_schema.sql
       - ./infrastructure/scripts/schema/rpk_bookingorder_schema.sql:/docker-entrypoint-initdb.d/04_bookingorder_schema.sql
