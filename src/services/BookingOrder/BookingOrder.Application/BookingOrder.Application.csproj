@@ -17,4 +17,8 @@
 
   <ItemGroup>
     <PackageReference Include="FluentValidation" Version="11.*" />
-    <PackageReference Include="MediatR" Version
+    <PackageReference Include="MediatR" Version="12.*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.*" />
+  </ItemGroup>
+
+</Project>

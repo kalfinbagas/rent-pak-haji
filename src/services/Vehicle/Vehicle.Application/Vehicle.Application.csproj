@@ -9,4 +9,11 @@
     <ProjectReference Include="..\Vehicle.Domain\Vehicle.Domain.csproj" />
     <ProjectReference Include="../../../../libs/common/RentPakHaji.Common.Application/RentPakHaji.Common.Application.csproj" />
     <ProjectReference Include="../../../../libs/common/RentPakHaji.Common.Broker/RentPakHaji.Common.Broker.csproj" />
-    <ProjectReference Include="../../../../libs/common/RentPak
+    <ProjectReference Include="../../../../libs/common/RentPakHaji.Common.Contracts/RentPakHaji.Common.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FluentValidation" Version="11.*" />
+    <PackageReference Include="MediatR" Version="12.*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.*" />
+  </ItemGroup>
+</Project>

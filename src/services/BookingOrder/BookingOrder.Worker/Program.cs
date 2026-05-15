@@ -52,4 +52,7 @@ catch (Exception ex)
 {
     Log.Fatal(ex, "BookingOrder Worker terminated unexpectedly");
 }
-f
+finally
+{
+    Log.CloseAndFlush();
+}

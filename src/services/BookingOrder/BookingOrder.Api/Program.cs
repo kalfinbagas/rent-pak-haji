@@ -117,4 +117,25 @@ try
     }
 
     // 3. Request logging
-    app.UseSerilogRequestLogging
+    app.UseSerilogRequestLogging();
+
+    // 4. Transaction-Id header validation
+    app.UseTransactionIdValidation();
+
+    // 5. Auth
+    app.UseAuthentication();
+    app.UseAuthorization();
+
+    app.MapControllers();
+    app.MapHealthChecks("/health").AllowAnonymous();
+
+    app.Run();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "BookingOrder API terminated unexpectedly");
+}
+finally
+{
+    Log.CloseAndFlush();
+}

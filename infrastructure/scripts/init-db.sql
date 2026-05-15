@@ -82,3 +82,9 @@ GRANT ALL PRIVILEGES ON DATABASE rpk_notification TO rpk_admin;
 -- ─────────────────────────────────────────────────────────────
 CREATE DATABASE rpk_voucher;
 GRANT ALL PRIVILEGES ON DATABASE rpk_voucher TO rpk_admin;
+
+-- ─────────────────────────────────────────────────────────────
+-- rpk_identity → UserAuth Service (.NET)
+-- ─────────────────────────────────────────────────────────────
+CREATE DATABASE rpk_identity;
+GRANT ALL PRIVILEGES ON DATABASE rpk_identity TO rpk_admin;

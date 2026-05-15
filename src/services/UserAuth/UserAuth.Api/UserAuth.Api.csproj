@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>UserAuth.Api</RootNamespace>
+    <UserSecretsId>userauth-api-dev</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\UserAuth.Application\UserAuth.Application.csproj" />
+    <ProjectReference Include="..\UserAuth.Infrastructure\UserAuth.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\..\libs\common\RentPakHaji.Common.Application\RentPakHaji.Common.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MediatR" Version="12.*" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="11.*" />
+    <PackageReference Include="Serilog.AspNetCore" Version="9.*" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.*" />
+    <PackageReference Include="Serilog.Sinks.Seq" Version="8.*" />
+    <PackageReference Include="Serilog.Settings.Configuration" Version="9.*" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.*" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.*" />
+    <PackageReference Include="Scalar.AspNetCore" Version="2.*" />
+    <PackageReference Include="RabbitMQ.Client" Version="7.*" />
+  </ItemGroup>
+
+</Project>

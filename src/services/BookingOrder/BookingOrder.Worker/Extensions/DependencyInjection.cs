@@ -39,4 +39,6 @@ public static class DependencyInjection
         // ── MainWorker — the single IHostedService ─────────────────
         services.AddHostedService<MainWorker>();
 
-        return services
+        return services;
+    }
+}

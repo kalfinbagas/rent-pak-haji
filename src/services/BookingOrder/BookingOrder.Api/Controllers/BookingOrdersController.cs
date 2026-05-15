@@ -50,4 +50,6 @@ public sealed class BookingOrdersController : ApiControllerBase
     {
         // TODO: implement GetBookingOrderByIdQuery
         await Task.CompletedTask;
-        return Ok(new { id, message = "TODO: implement GetBookingOrderByIdQuery" 
+        return Ok(new { id, message = "TODO: implement GetBookingOrderByIdQuery" });
+    }
+}

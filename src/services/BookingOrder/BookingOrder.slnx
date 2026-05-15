@@ -3,4 +3,12 @@
   <Project Path="BookingOrder.Domain\BookingOrder.Domain.csproj" />
   <Project Path="BookingOrder.Application\BookingOrder.Application.csproj" />
   <Project Path="BookingOrder.Infrastructure\BookingOrder.Infrastructure.csproj" />
-  <Project Path="BookingOrder.Api\BookingOrder
+  <Project Path="BookingOrder.Api\BookingOrder.Api.csproj" />
+  <Project Path="BookingOrder.Worker\BookingOrder.Worker.csproj" />
+  <!-- Shared libs — required so VS can restore cross-solution project references -->
+  <Project Path="..\..\..\libs\common\RentPakHaji.Common.Domain\RentPakHaji.Common.Domain.csproj" />
+  <Project Path="..\..\..\libs\common\RentPakHaji.Common.Application\RentPakHaji.Common.Application.csproj" />
+  <Project Path="..\..\..\libs\common\RentPakHaji.Common.Infrastructure\RentPakHaji.Common.Infrastructure.csproj" />
+  <Project Path="..\..\..\libs\common\RentPakHaji.Common.Broker\RentPakHaji.Common.Broker.csproj" />
+  <Project Path="..\..\..\libs\common\RentPakHaji.Common.Contracts\RentPakHaji.Common.Contracts.csproj" />
+</Solution>

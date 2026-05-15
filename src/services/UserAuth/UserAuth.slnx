@@ -1,0 +1,14 @@
+<Solution>
+  <!-- Service projects -->
+  <Project Path="UserAuth.Domain\UserAuth.Domain.csproj" />
+  <Project Path="UserAuth.Application\UserAuth.Application.csproj" />
+  <Project Path="UserAuth.Infrastructure\UserAuth.Infrastructure.csproj" />
+  <Project Path="UserAuth.Api\UserAuth.Api.csproj" />
+  <Project Path="UserAuth.Worker\UserAuth.Worker.csproj" />
+  <!-- Common library projects -->
+  <Project Path="..\..\..\libs\common\RentPakHaji.Common.Domain\RentPakHaji.Common.Domain.csproj" />
+  <Project Path="..\..\..\libs\common\RentPakHaji.Common.Application\RentPakHaji.Common.Application.csproj" />
+  <Project Path="..\..\..\libs\common\RentPakHaji.Common.Infrastructure\RentPakHaji.Common.Infrastructure.csproj" />
+  <Project Path="..\..\..\libs\common\RentPakHaji.Common.Broker\RentPakHaji.Common.Broker.csproj" />
+  <Project Path="..\..\..\libs\common\RentPakHaji.Common.Contracts\RentPakHaji.Common.Contracts.csproj" />
+</Solution>
